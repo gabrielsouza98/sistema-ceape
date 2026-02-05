@@ -72,7 +72,10 @@ async function dbRun(sql, params = []) {
 async function initDb() {
   if (USE_POSTGRES) {
     pgPool = new Pool({
-      connectionString: process.env.DATABASE_URL
+      connectionString: process.env.DATABASE_URL,
+      ssl: {
+        rejectUnauthorized: false
+      }
     });
 
     // Criar tabela em Postgres
