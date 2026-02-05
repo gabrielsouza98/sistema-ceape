@@ -10,7 +10,10 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-const dbPath = path.join(__dirname, 'dados.db');
+// Caminho do banco:
+// - Em produção (Render), use a variável de ambiente DB_PATH apontando para o Disk
+// - Em desenvolvimento local, cai no arquivo dados.db na raiz do projeto
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'dados.db');
 const db = new Database(dbPath);
 
 db.exec(`
