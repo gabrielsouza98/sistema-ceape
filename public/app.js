@@ -37,7 +37,7 @@ if (window.Chart && window.ChartDataLabels) {
 
 const GRUPOS = {
   'Coordenador Edivaldo': ['Eudes', 'Josiel', 'Atailson', 'Rangel'],
-  'Coordenador Glenyo': ['Jessyca', 'Carlos', 'Helio', 'Xavier', 'Dirceu', 'Jose de Freitas', 'Uniao'],
+  'Coordenador Glenyo': ['Jessyca', 'Carlos', 'Helio', 'Xavier', 'Dirceu', 'Jose de Freitas', 'Uniao', 'Altos'],
   'Coordenador Anaídia': ['Arlene', 'David'],
   'Coordenador Parnaiba': ['Alessia', 'Marcos', 'Renan']
 };
