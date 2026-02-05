@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dashboard CEAPE</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="brand">
+          <span class="logo">
+            <img src="logo-ceape.png" alt="CEAPE Microcrédito" class="logo-img" />
+          </span>
+          <div class="brand-text">
+            <h1>Dashboard CEAPE</h1>
+            <p>Indicadores financeiros e operacionais</p>
+          </div>
+        </div>
+        <div class="filters">
+          <label>
+            Pessoa
+            <select id="pessoaSelect">
+              <option value="">Nenhum</option>
+            </select>
+          </label>
+          <label>
+            Coordenador
+            <select id="coordenadorSelect">
+              <option value="">Individual</option>
+              <option value="Coordenador Edivaldo">Coordenador Edivaldo</option>
+              <option value="Coordenador Glenyo">Coordenador Glenyo</option>
+              <option value="Coordenador Anaídia">Coordenador Anaídia</option>
+              <option value="Coordenador Parnaiba">Coordenador Parnaíba</option>
+            </select>
+          </label>
+          <label>
+            Categoria
+            <select id="categoriaSelect">
+              <option value="">Nenhum</option>
+            </select>
+          </label>
+          <label>
+            Ano
+            <select id="anoSelect">
+              <option value="">Todos</option>
+            </select>
+          </label>
+          <label>
+            Mês
+            <select id="mesSelect">
+              <option value="">Todos</option>
+            </select>
+          </label>
+        </div>
+      </header>
+
+      <main class="content">
+        <div class="tabs">
+          <button id="tabDashboard" class="tab-button active">Dashboard</button>
+          <button id="tabCadastro" class="tab-button">Cadastro</button>
+          <button id="tabGerenciar" class="tab-button">Gerenciar</button>
+        </div>
+
+        <section id="cadastroSection" class="panel hidden">
+          <div class="panel-header">
+            <h2>Cadastro de dados</h2>
+          </div>
+          <form id="cadastroForm" class="form-grid">
+            <label>
+              Agente
+              <input id="cadPessoa" type="text" placeholder="Nome do agente (ex: Diego)" required />
+            </label>
+            <label>
+              Ano
+              <input id="cadAno" type="number" min="2000" max="2100" required />
+            </label>
+            <label>
+              Mês
+              <select id="cadMes" required>
+                <option value="">Selecione</option>
+                <option value="Janeiro">Janeiro</option>
+                <option value="Fevereiro">Fevereiro</option>
+                <option value="Março">Março</option>
+                <option value="Abril">Abril</option>
+                <option value="Maio">Maio</option>
+                <option value="Junho">Junho</option>
+                <option value="Julho">Julho</option>
+                <option value="Agosto">Agosto</option>
+                <option value="Setembro">Setembro</option>
+                <option value="Outubro">Outubro</option>
+                <option value="Novembro">Novembro</option>
+                <option value="Dezembro">Dezembro</option>
+              </select>
+            </label>
+            <label>
+              Categoria
+              <select id="cadCategoria" required>
+                <option value="">Selecione</option>
+              </select>
+            </label>
+            <label>
+              Valor
+              <input id="cadValor" type="number" step="0.01" min="0" required />
+            </label>
+            <div class="form-actions">
+              <button type="submit" class="btn-primary">Salvar registro</button>
+            </div>
+          </form>
+        </section>
+
+        <div id="dashboardSection">
+          <section class="cards" id="cardsResumo"></section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Série histórica</h2>
+              <span id="serieTitulo" class="badge">Todas as categorias</span>
+            </div>
+            <canvas id="graficoLinha" height="120"></canvas>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Comparação</h2>
+              <button id="btnComparar" class="btn-compare">Comparar</button>
+            </div>
+            <div class="comparison-controls">
+              <div class="compare-group">
+                <h3>Série 1</h3>
+                <label>
+                  Pessoa
+                  <select id="comparePessoa1">
+                    <option value="">Todas</option>
+                  </select>
+                </label>
+                <label>
+                  Ano
+                  <select id="compareAno1">
+                    <option value="">Todos</option>
+                  </select>
+                </label>
+              </div>
+              <div class="compare-group">
+                <h3>Série 2</h3>
+                <label>
+                  Pessoa
+                  <select id="comparePessoa2">
+                    <option value="">Todas</option>
+                  </select>
+                </label>
+                <label>
+                  Ano
+                  <select id="compareAno2">
+                    <option value="">Todos</option>
+                  </select>
+                </label>
+              </div>
+            </div>
+            <canvas id="graficoComparacao" height="120"></canvas>
+          </section>
+
+          <section class="panel">
+            <div class="panel-header">
+              <h2>Dados detalhados</h2>
+            </div>
+            <div class="table-wrapper">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Mês</th>
+                    <th>Ano</th>
+                    <th>Pessoa</th>
+                    <th>Categoria</th>
+                    <th class="right">Valor</th>
+                  </tr>
+                </thead>
+                <tbody id="tabelaBody"></tbody>
+              </table>
+            </div>
+          </section>
+        </div>
+
+        <section id="gerenciarSection" class="panel hidden">
+          <div class="panel-header">
+            <h2>Gerenciar registros</h2>
+          </div>
+          <div class="filters gerenciar-filters">
+            <label>
+              Pessoa
+              <select id="gerenciarPessoaSelect">
+                <option value="">Todas</option>
+              </select>
+            </label>
+            <label>
+              Categoria
+              <select id="gerenciarCategoriaSelect">
+                <option value="">Todas</option>
+              </select>
+            </label>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Mês</th>
+                  <th>Ano</th>
+                  <th>Pessoa</th>
+                  <th>Categoria</th>
+                  <th class="right">Valor</th>
+                  <th class="right">Ações</th>
+                </tr>
+              </thead>
+              <tbody id="tabelaGerenciarBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </main>
+
+      <footer class="footer">
+        <div class="footer-creditos">
+          <span>Desenvolvido por Gabriel Souza</span>
+          <img src="logo-gabriel.png" alt="Logo Gabriel Souza" class="footer-logo" />
+          <span>| Contato: 86 99842-5392</span>
+        </div>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+  </html>

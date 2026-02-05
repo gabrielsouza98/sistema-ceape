@@ -1,0 +1,16 @@
+{
+  "name": "sistema-ceape",
+  "version": "1.0.0",
+  "description": "Dashboard web para exibir indicadores financeiros carregados de Excel e armazenados em banco de dados.",
+  "main": "server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.0.0",
+    "express": "^4.21.0",
+    "cors": "^2.8.5"
+  }
+}
