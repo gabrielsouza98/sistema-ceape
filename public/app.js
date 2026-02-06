@@ -21,15 +21,21 @@ const cadValor = document.getElementById('cadValor');
 const tabDashboard = document.getElementById('tabDashboard');
 const tabCadastro = document.getElementById('tabCadastro');
 const tabGerenciar = document.getElementById('tabGerenciar');
+const tabLogs = document.getElementById('tabLogs');
 const dashboardSection = document.getElementById('dashboardSection');
 const cadastroSection = document.getElementById('cadastroSection');
 const gerenciarSection = document.getElementById('gerenciarSection');
+const logsSection = document.getElementById('logsSection');
 const gerenciarPessoaSelect = document.getElementById('gerenciarPessoaSelect');
 const gerenciarCategoriaSelect = document.getElementById('gerenciarCategoriaSelect');
+const logsPasswordInput = document.getElementById('logsPasswordInput');
+const logsLoadButton = document.getElementById('logsLoadButton');
+const logsBody = document.getElementById('logsBody');
 
 let grafico;
 let graficoComparacao;
 let editingId = null;
+let logsPassword = '';
 
 if (window.Chart && window.ChartDataLabels) {
   Chart.register(window.ChartDataLabels);
@@ -604,6 +610,69 @@ async function carregarGerenciar() {
   atualizarTabelaGerenciar(dados);
 }
 
+async function carregarLogs() {
+  const pwd = logsPasswordInput.value.trim();
+  if (!pwd) {
+    showToast('Informe a senha para visualizar os logs.', 'info');
+    return;
+  }
+  logsPassword = pwd;
+
+  try {
+    logsBody.innerHTML = '<tr><td colspan="9" style="text-align:center; color: var(--muted);">Carregando logs...</td></tr>';
+
+    const res = await fetch('/api/logs?limit=200', {
+      headers: {
+        'x-logs-password': logsPassword
+      }
+    });
+
+    if (res.status === 401) {
+      logsBody.innerHTML = '';
+      showToast('Senha de logs incorreta.', 'error');
+      return;
+    }
+
+    if (!res.ok) {
+      throw new Error('Erro ao carregar logs.');
+    }
+
+    const dados = await res.json();
+    logsBody.innerHTML = '';
+
+    if (!dados.length) {
+      const tr = document.createElement('tr');
+      tr.innerHTML = '<td colspan="9" style="text-align:center; color: var(--muted);">Nenhum log encontrado.</td>';
+      logsBody.appendChild(tr);
+      return;
+    }
+
+    for (const row of dados) {
+      const tr = document.createElement('tr');
+      const data = row.criado_em ? new Date(row.criado_em) : null;
+      const dataFmt = data
+        ? data.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
+        : '-';
+
+      tr.innerHTML = `
+        <td>${dataFmt}</td>
+        <td>${row.acao || '-'}</td>
+        <td>${row.pessoa || '-'}</td>
+        <td>${row.categoria || '-'}</td>
+        <td>${row.ano ?? '-'}</td>
+        <td>${row.mes || '-'}</td>
+        <td class="right">${row.valor_antigo ?? '-'}</td>
+        <td class="right">${row.valor_novo ?? '-'}</td>
+        <td>${row.origem || '-'}</td>
+      `;
+      logsBody.appendChild(tr);
+    }
+  } catch (e) {
+    console.error(e);
+    showToast('Erro ao carregar logs.', 'error');
+  }
+}
+
 async function init() {
   try {
     await Promise.all([
@@ -638,6 +707,7 @@ cadastroForm.addEventListener('submit', salvarCadastro);
 
 gerenciarPessoaSelect.addEventListener('change', carregarGerenciar);
 gerenciarCategoriaSelect.addEventListener('change', carregarGerenciar);
+logsLoadButton.addEventListener('click', carregarLogs);
 
 tabelaGerenciarBody.addEventListener('click', async (event) => {
   const target = event.target;
@@ -668,28 +738,45 @@ tabDashboard.addEventListener('click', () => {
   tabDashboard.classList.add('active');
   tabCadastro.classList.remove('active');
   tabGerenciar.classList.remove('active');
+  tabLogs.classList.remove('active');
   dashboardSection.classList.remove('hidden');
   cadastroSection.classList.add('hidden');
   gerenciarSection.classList.add('hidden');
+  logsSection.classList.add('hidden');
 });
 
 tabCadastro.addEventListener('click', () => {
   tabCadastro.classList.add('active');
   tabDashboard.classList.remove('active');
   tabGerenciar.classList.remove('active');
+  tabLogs.classList.remove('active');
   dashboardSection.classList.add('hidden');
   cadastroSection.classList.remove('hidden');
   gerenciarSection.classList.add('hidden');
+  logsSection.classList.add('hidden');
 });
 
 tabGerenciar.addEventListener('click', async () => {
   tabGerenciar.classList.add('active');
   tabDashboard.classList.remove('active');
   tabCadastro.classList.remove('active');
+  tabLogs.classList.remove('active');
   dashboardSection.classList.add('hidden');
   cadastroSection.classList.add('hidden');
   gerenciarSection.classList.remove('hidden');
+  logsSection.classList.add('hidden');
   await carregarGerenciar();
+});
+
+tabLogs.addEventListener('click', () => {
+  tabLogs.classList.add('active');
+  tabDashboard.classList.remove('active');
+  tabCadastro.classList.remove('active');
+  tabGerenciar.classList.remove('active');
+  dashboardSection.classList.add('hidden');
+  cadastroSection.classList.add('hidden');
+  gerenciarSection.classList.add('hidden');
+  logsSection.classList.remove('hidden');
 });
 
 init();

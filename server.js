@@ -16,6 +16,7 @@ const PORT = process.env.PORT || 3000;
 // Se existir DATABASE_URL, usamos PostgreSQL (produção).
 // Caso contrário, usamos SQLite local (desenvolvimento).
 const USE_POSTGRES = !!process.env.DATABASE_URL;
+const LOGS_PASSWORD = process.env.LOGS_PASSWORD || 'admin123';
 
 let pgPool = null;
 let sqliteDb = null;
@@ -78,7 +79,7 @@ async function initDb() {
       }
     });
 
-    // Criar tabela em Postgres
+    // Criar tabelas em Postgres
     await pgPool.query(`
       CREATE TABLE IF NOT EXISTS indicadores (
         id SERIAL PRIMARY KEY,
@@ -88,7 +89,22 @@ async function initDb() {
         categoria TEXT NOT NULL,
         pessoa TEXT,
         valor DOUBLE PRECISION NOT NULL
-      )
+      );
+
+      CREATE TABLE IF NOT EXISTS logs (
+        id SERIAL PRIMARY KEY,
+        criado_em TIMESTAMPTZ DEFAULT NOW(),
+        acao TEXT NOT NULL,
+        entidade TEXT NOT NULL,
+        indicador_id INTEGER,
+        pessoa TEXT,
+        categoria TEXT,
+        ano INTEGER,
+        mes TEXT,
+        valor_antigo DOUBLE PRECISION,
+        valor_novo DOUBLE PRECISION,
+        origem TEXT
+      );
     `);
   } else {
     // Caminho do banco SQLite local
@@ -105,7 +121,64 @@ async function initDb() {
         pessoa TEXT,
         valor REAL NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        criado_em DATETIME DEFAULT CURRENT_TIMESTAMP,
+        acao TEXT NOT NULL,
+        entidade TEXT NOT NULL,
+        indicador_id INTEGER,
+        pessoa TEXT,
+        categoria TEXT,
+        ano INTEGER,
+        mes TEXT,
+        valor_antigo REAL,
+        valor_novo REAL,
+        origem TEXT
+      );
     `);
+  }
+}
+
+async function registrarLog({
+  acao,
+  entidade = 'indicador',
+  indicadorId = null,
+  pessoa = null,
+  categoria = null,
+  ano = null,
+  mes = null,
+  valorAntigo = null,
+  valorNovo = null,
+  origem = 'app'
+}) {
+  const sql = USE_POSTGRES
+    ? `
+        INSERT INTO logs (acao, entidade, indicador_id, pessoa, categoria, ano, mes, valor_antigo, valor_novo, origem)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      `
+    : `
+        INSERT INTO logs (acao, entidade, indicador_id, pessoa, categoria, ano, mes, valor_antigo, valor_novo, origem)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `;
+
+  const params = [
+    acao,
+    entidade,
+    indicadorId,
+    pessoa,
+    categoria,
+    ano,
+    mes,
+    valorAntigo,
+    valorNovo,
+    origem
+  ];
+
+  try {
+    await dbRun(sql, params);
+  } catch (e) {
+    console.error('Erro ao registrar log:', e);
   }
 }
 
@@ -198,6 +271,16 @@ app.post('/api/indicadores', async (req, res) => {
 
       const id = result.rows[0].id;
 
+      await registrarLog({
+        acao: 'create',
+        indicadorId: id,
+        pessoa,
+        categoria,
+        ano: anoNum,
+        mes,
+        valorNovo: valorNum
+      });
+
       return res.status(201).json({
         id,
         mes,
@@ -215,9 +298,20 @@ app.post('/api/indicadores', async (req, res) => {
         `,
         [mes, anoNum, mesOrdem, categoria, pessoa, valorNum]
       );
+      const id = info.lastInsertRowid;
+
+      await registrarLog({
+        acao: 'create',
+        indicadorId: id,
+        pessoa,
+        categoria,
+        ano: anoNum,
+        mes,
+        valorNovo: valorNum
+      });
 
       return res.status(201).json({
-        id: info.lastInsertRowid,
+        id,
         mes,
         ano: anoNum,
         mes_ordem: mesOrdem,
@@ -271,6 +365,22 @@ app.put('/api/indicadores/:id', async (req, res) => {
       return res.status(400).json({ error: 'Valor inválido.' });
     }
 
+    // Buscar valor antigo para log
+    let antigo = null;
+    if (USE_POSTGRES) {
+      const rows = await dbQueryAll(
+        'SELECT mes, ano, mes_ordem, categoria, pessoa, valor FROM indicadores WHERE id = $1',
+        [id]
+      );
+      antigo = rows[0] || null;
+    } else {
+      const rows = await dbQueryAll(
+        'SELECT mes, ano, mes_ordem, categoria, pessoa, valor FROM indicadores WHERE id = ?',
+        [id]
+      );
+      antigo = rows[0] || null;
+    }
+
     let result;
     if (USE_POSTGRES) {
       result = await dbRun(
@@ -300,6 +410,17 @@ app.put('/api/indicadores/:id', async (req, res) => {
       }
     }
 
+    await registrarLog({
+      acao: 'update',
+      indicadorId: id,
+      pessoa,
+      categoria,
+      ano: anoNum,
+      mes,
+      valorAntigo: antigo ? antigo.valor : null,
+      valorNovo: valorNum
+    });
+
     return res.json({
       id,
       mes,
@@ -323,17 +444,39 @@ app.delete('/api/indicadores/:id', async (req, res) => {
       return res.status(400).json({ error: 'ID inválido.' });
     }
 
+    // Buscar registro para log
+    let antigo = null;
     if (USE_POSTGRES) {
+      const rows = await dbQueryAll(
+        'SELECT mes, ano, mes_ordem, categoria, pessoa, valor FROM indicadores WHERE id = $1',
+        [id]
+      );
+      antigo = rows[0] || null;
       const result = await dbRun('DELETE FROM indicadores WHERE id = $1', [id]);
       if (result.rowCount === 0) {
         return res.status(404).json({ error: 'Registro não encontrado.' });
       }
     } else {
+      const rows = await dbQueryAll(
+        'SELECT mes, ano, mes_ordem, categoria, pessoa, valor FROM indicadores WHERE id = ?',
+        [id]
+      );
+      antigo = rows[0] || null;
       const info = await dbRun('DELETE FROM indicadores WHERE id = ?', [id]);
       if (info.changes === 0) {
         return res.status(404).json({ error: 'Registro não encontrado.' });
       }
     }
+
+    await registrarLog({
+      acao: 'delete',
+      indicadorId: id,
+      pessoa: antigo ? antigo.pessoa : null,
+      categoria: antigo ? antigo.categoria : null,
+      ano: antigo ? antigo.ano : null,
+      mes: antigo ? antigo.mes : null,
+      valorAntigo: antigo ? antigo.valor : null
+    });
 
     return res.status(204).end();
   } catch (e) {
@@ -427,17 +570,39 @@ app.delete('/api/pessoas/:pessoa', async (req, res) => {
       return res.status(400).json({ error: 'Pessoa inválida.' });
     }
 
-    let result;
+    // Buscar registros para log
+    let registros = [];
     if (USE_POSTGRES) {
-      result = await dbRun('DELETE FROM indicadores WHERE pessoa = $1', [pessoa]);
+      registros = await dbQueryAll(
+        'SELECT id, mes, ano, mes_ordem, categoria, pessoa, valor FROM indicadores WHERE pessoa = $1',
+        [pessoa]
+      );
+      const result = await dbRun('DELETE FROM indicadores WHERE pessoa = $1', [pessoa]);
       if (result.rowCount === 0) {
         return res.status(404).json({ error: 'Nenhum registro encontrado para essa pessoa.' });
       }
     } else {
+      registros = await dbQueryAll(
+        'SELECT id, mes, ano, mes_ordem, categoria, pessoa, valor FROM indicadores WHERE pessoa = ?',
+        [pessoa]
+      );
       const info = await dbRun('DELETE FROM indicadores WHERE pessoa = ?', [pessoa]);
       if (info.changes === 0) {
         return res.status(404).json({ error: 'Nenhum registro encontrado para essa pessoa.' });
       }
+    }
+
+    for (const r of registros) {
+      await registrarLog({
+        acao: 'delete',
+        indicadorId: r.id,
+        pessoa: r.pessoa,
+        categoria: r.categoria,
+        ano: r.ano,
+        mes: r.mes,
+        valorAntigo: r.valor,
+        origem: 'delete-pessoa'
+      });
     }
 
     return res.status(204).end();
@@ -475,6 +640,44 @@ app.get('/api/meses', async (_req, res) => {
     res.json(rows.map((r) => r.mes));
   } catch (e) {
     console.error('Erro em /api/meses:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Logs (histórico de alterações)
+app.get('/api/logs', async (req, res) => {
+  try {
+    if (LOGS_PASSWORD) {
+      const provided =
+        req.headers['x-logs-password'] ||
+        req.query.password;
+      if (!provided || String(provided) !== String(LOGS_PASSWORD)) {
+        return res.status(401).json({ error: 'Senha inválida para visualizar logs.' });
+      }
+    }
+
+    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+
+    const sql = USE_POSTGRES
+      ? `
+          SELECT id, criado_em, acao, entidade, indicador_id, pessoa, categoria, ano, mes,
+                 valor_antigo, valor_novo, origem
+          FROM logs
+          ORDER BY criado_em DESC
+          LIMIT $1
+        `
+      : `
+          SELECT id, criado_em, acao, entidade, indicador_id, pessoa, categoria, ano, mes,
+                 valor_antigo, valor_novo, origem
+          FROM logs
+          ORDER BY criado_em DESC
+          LIMIT ?
+        `;
+
+    const rows = await dbQueryAll(sql, [limit]);
+    res.json(rows);
+  } catch (e) {
+    console.error('Erro em /api/logs:', e);
     res.status(500).json({ error: e.message });
   }
 });

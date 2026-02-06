@@ -478,6 +478,37 @@ tbody tr:hover {
   }
 }
 
+.logs-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.logs-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.8rem;
+  color: var(--muted);
+}
+
+.logs-controls input {
+  padding: 6px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  background: rgba(15, 23, 42, 0.9);
+  color: var(--text);
+  font-size: 0.85rem;
+}
+
+.logs-load-button {
+  height: 32px;
+  padding-inline: 14px;
+  font-size: 0.8rem;
+}
+
 @media (max-width: 640px) {
   .topbar {
     align-items: flex-start;

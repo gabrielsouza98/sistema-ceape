@@ -63,6 +63,7 @@
           <button id="tabDashboard" class="tab-button active">Dashboard</button>
           <button id="tabCadastro" class="tab-button">Cadastro</button>
           <button id="tabGerenciar" class="tab-button">Gerenciar</button>
+          <button id="tabLogs" class="tab-button">Logs</button>
         </div>
 
         <section id="cadastroSection" class="panel hidden">
@@ -216,6 +217,39 @@
                 </tr>
               </thead>
               <tbody id="tabelaGerenciarBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section id="logsSection" class="panel hidden">
+          <div class="panel-header">
+            <h2>Histórico de alterações</h2>
+          </div>
+          <div class="logs-controls">
+            <label>
+              Senha
+              <input id="logsPasswordInput" type="password" placeholder="Senha para ver logs" />
+            </label>
+            <button id="logsLoadButton" class="btn-primary logs-load-button" type="button">
+              Carregar logs
+            </button>
+          </div>
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Data</th>
+                  <th>Ação</th>
+                  <th>Pessoa</th>
+                  <th>Categoria</th>
+                  <th>Ano</th>
+                  <th>Mês</th>
+                  <th>Valor antigo</th>
+                  <th>Valor novo</th>
+                  <th>Origem</th>
+                </tr>
+              </thead>
+              <tbody id="logsBody"></tbody>
             </table>
           </div>
         </section>
