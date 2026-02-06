@@ -35,6 +35,29 @@ if (window.Chart && window.ChartDataLabels) {
   Chart.register(window.ChartDataLabels);
 }
 
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  if (!container) return;
+
+  const toast = document.createElement('div');
+  toast.className = `toast toast-${type}`;
+  toast.innerHTML = `
+    <span>${message}</span>
+    <button class="toast-close" aria-label="Fechar notificação">&times;</button>
+  `;
+
+  const close = () => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateY(8px)';
+    setTimeout(() => toast.remove(), 150);
+  };
+
+  toast.querySelector('.toast-close').addEventListener('click', close);
+  setTimeout(close, 4500);
+
+  container.appendChild(toast);
+}
+
 const GRUPOS = {
   'Coordenador Edivaldo': ['Eudes', 'Josiel', 'Atailson', 'Rangel'],
   'Coordenador Glenyo': ['Jessyca', 'Carlos', 'Helio', 'Xavier', 'Dirceu', 'Jose de Freitas', 'Uniao', 'Altos'],
@@ -239,7 +262,7 @@ function renderizarGrafico(dados, filtros) {
 async function renderizarComparacao() {
   const categoria = categoriaSelect.value;
   if (!categoria) {
-    alert('Selecione uma categoria para comparar');
+    showToast('Selecione uma categoria para comparar.', 'info');
     return;
   }
 
@@ -369,7 +392,7 @@ async function salvarCadastro(event) {
   const valor = cadValor.value;
 
   if (!pessoa || !ano || !mes || !categoria || !valor) {
-    alert('Preencha todos os campos do cadastro.');
+    showToast('Preencha todos os campos do cadastro.', 'error');
     return;
   }
 
@@ -415,10 +438,13 @@ async function salvarCadastro(event) {
 
     await carregarDados();
     await carregarGerenciar();
-    alert(wasEditing ? 'Registro atualizado com sucesso!' : 'Registro salvo com sucesso!');
+    showToast(
+      wasEditing ? 'Registro atualizado com sucesso.' : 'Registro salvo com sucesso.',
+      'success'
+    );
   } catch (e) {
     console.error(e);
-    alert(e.message || 'Erro ao salvar registro.');
+    showToast(e.message || 'Erro ao salvar registro.', 'error');
   }
 }
 
@@ -455,9 +481,10 @@ async function removerRegistro(id) {
     ]);
     await carregarDados();
     await carregarGerenciar();
+    showToast('Registro removido com sucesso.', 'success');
   } catch (e) {
     console.error(e);
-    alert(e.message || 'Erro ao remover registro.');
+    showToast(e.message || 'Erro ao remover registro.', 'error');
   }
 }
 
@@ -597,7 +624,7 @@ async function init() {
     await carregarGerenciar();
   } catch (e) {
     console.error(e);
-    alert('Erro ao carregar dados do servidor.');
+    showToast('Erro ao carregar dados do servidor.', 'error');
   }
 }
 
