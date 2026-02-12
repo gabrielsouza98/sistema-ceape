@@ -13,7 +13,9 @@ const comparePessoa2 = document.getElementById('comparePessoa2');
 const compareAno1 = document.getElementById('compareAno1');
 const compareAno2 = document.getElementById('compareAno2');
 const cadastroForm = document.getElementById('cadastroForm');
-const cadPessoa = document.getElementById('cadPessoa');
+const cadPessoaSelect = document.getElementById('cadPessoaSelect');
+const cadPessoaNovo = document.getElementById('cadPessoaNovo');
+const cadPessoaNovoLabel = document.getElementById('cadPessoaNovoLabel');
 const cadAno = document.getElementById('cadAno');
 const cadMes = document.getElementById('cadMes');
 const cadCategoria = document.getElementById('cadCategoria');
@@ -386,18 +388,45 @@ async function popularSelect(selectId, endpoint, optionValue = '', optionText = 
     opt.textContent = optionText ? item[optionText] : item;
     select.appendChild(opt);
   }
+
+  // Adicionar opção "Outros" apenas no cadastro de agente
+  if (selectId === 'cadPessoaSelect') {
+    const optOutros = document.createElement('option');
+    optOutros.value = '__OUTROS__';
+    optOutros.textContent = 'Outros';
+    select.appendChild(optOutros);
+  }
 }
 
 async function salvarCadastro(event) {
   event.preventDefault();
 
-  const pessoa = cadPessoa.value.trim();
+  const pessoaSelecionada = cadPessoaSelect.value;
+  const novaPessoa = cadPessoaNovo.value.trim();
+
+  let pessoa = '';
+  if (pessoaSelecionada === '__OUTROS__') {
+    pessoa = novaPessoa;
+  } else {
+    pessoa = pessoaSelecionada;
+  }
+
   const ano = cadAno.value;
   const mes = cadMes.value;
   const categoria = cadCategoria.value;
   const valor = cadValor.value;
 
-  if (!pessoa || !ano || !mes || !categoria || !valor) {
+  if (!pessoaSelecionada) {
+    showToast('Selecione um agente.', 'error');
+    return;
+  }
+
+  if (pessoaSelecionada === '__OUTROS__' && !novaPessoa) {
+    showToast('Informe o nome do novo agente.', 'error');
+    return;
+  }
+
+  if (!ano || !mes || !categoria || !valor) {
     showToast('Preencha todos os campos do cadastro.', 'error');
     return;
   }
@@ -420,6 +449,9 @@ async function salvarCadastro(event) {
     }
 
     cadPessoa.value = '';
+    cadPessoaSelect.value = '';
+    cadPessoaNovo.value = '';
+    cadPessoaNovoLabel.classList.add('hidden');
     cadAno.value = '';
     cadMes.value = '';
     cadCategoria.value = '';
@@ -434,6 +466,7 @@ async function salvarCadastro(event) {
     await Promise.all([
       popularSelect('pessoaSelect', '/api/pessoas'),
       popularSelect('gerenciarPessoaSelect', '/api/pessoas'),
+      popularSelect('cadPessoaSelect', '/api/pessoas'),
       popularSelect('anoSelect', '/api/anos'),
       popularSelect('mesSelect', '/api/meses'),
       popularSelect('comparePessoa1', '/api/pessoas'),
@@ -456,7 +489,6 @@ async function salvarCadastro(event) {
 
 function entrarModoEdicao(row) {
   editingId = row.id;
-  cadPessoa.value = row.pessoa || '';
   cadAno.value = row.ano;
   cadMes.value = row.mes;
   cadCategoria.value = row.categoria;
@@ -466,6 +498,21 @@ function entrarModoEdicao(row) {
   if (btnText) btnText.textContent = 'Atualizar registro';
 
   tabCadastro.click();
+
+  // Ajustar seleção do agente ao entrar em edição
+  if (row.pessoa) {
+    const options = Array.from(cadPessoaSelect.options);
+    const exists = options.some((o) => o.value === row.pessoa);
+    if (!exists) {
+      const opt = document.createElement('option');
+      opt.value = row.pessoa;
+      opt.textContent = row.pessoa;
+      cadPessoaSelect.insertBefore(opt, options[options.length - 1] || null); // antes de "Outros"
+    }
+    cadPessoaSelect.value = row.pessoa;
+    cadPessoaNovoLabel.classList.add('hidden');
+    cadPessoaNovo.value = '';
+  }
 }
 
 async function removerRegistro(id) {
@@ -681,6 +728,7 @@ async function init() {
       popularSelect('gerenciarCategoriaSelect', '/api/categorias'),
       popularSelect('pessoaSelect', '/api/pessoas'),
       popularSelect('gerenciarPessoaSelect', '/api/pessoas'),
+      popularSelect('cadPessoaSelect', '/api/pessoas'),
       popularSelect('anoSelect', '/api/anos'),
       popularSelect('mesSelect', '/api/meses'),
       popularSelect('comparePessoa1', '/api/pessoas'),
@@ -708,6 +756,18 @@ cadastroForm.addEventListener('submit', salvarCadastro);
 gerenciarPessoaSelect.addEventListener('change', carregarGerenciar);
 gerenciarCategoriaSelect.addEventListener('change', carregarGerenciar);
 logsLoadButton.addEventListener('click', carregarLogs);
+
+cadPessoaSelect.addEventListener('change', () => {
+  if (cadPessoaSelect.value === '__OUTROS__') {
+    cadPessoaNovoLabel.classList.remove('hidden');
+    cadPessoaNovoLabel.style.display = '';
+    cadPessoaNovo.focus();
+  } else {
+    cadPessoaNovoLabel.classList.add('hidden');
+    cadPessoaNovoLabel.style.display = 'none';
+    cadPessoaNovo.value = '';
+  }
+});
 
 tabelaGerenciarBody.addEventListener('click', async (event) => {
   const target = event.target;

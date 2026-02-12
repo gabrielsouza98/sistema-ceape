@@ -22,7 +22,7 @@
         </div>
         <div class="filters">
           <label>
-            Pessoa
+            Agente
             <select id="pessoaSelect">
               <option value="">Nenhum</option>
             </select>
@@ -73,7 +73,13 @@
           <form id="cadastroForm" class="form-grid">
             <label>
               Agente
-              <input id="cadPessoa" type="text" placeholder="Nome do agente (ex: Diego)" required />
+              <select id="cadPessoaSelect" required>
+                <option value="">Selecione</option>
+              </select>
+            </label>
+            <label id="cadPessoaNovoLabel" class="hidden" style="display: none;">
+              Novo agente
+              <input id="cadPessoaNovo" type="text" placeholder="Nome do novo agente" />
             </label>
             <label>
               Ano
@@ -133,7 +139,7 @@
               <div class="compare-group">
                 <h3>Série 1</h3>
                 <label>
-                  Pessoa
+                  Agente
                   <select id="comparePessoa1">
                     <option value="">Todas</option>
                   </select>
@@ -148,7 +154,7 @@
               <div class="compare-group">
                 <h3>Série 2</h3>
                 <label>
-                  Pessoa
+                  Agente
                   <select id="comparePessoa2">
                     <option value="">Todas</option>
                   </select>
@@ -174,7 +180,7 @@
                   <tr>
                     <th>Mês</th>
                     <th>Ano</th>
-                    <th>Pessoa</th>
+                    <th>Agente</th>
                     <th>Categoria</th>
                     <th class="right">Valor</th>
                   </tr>
@@ -191,7 +197,7 @@
           </div>
           <div class="filters gerenciar-filters">
             <label>
-              Pessoa
+              Agente
               <select id="gerenciarPessoaSelect">
                 <option value="">Todas</option>
               </select>
@@ -210,7 +216,7 @@
                   <th>ID</th>
                   <th>Mês</th>
                   <th>Ano</th>
-                  <th>Pessoa</th>
+                  <th>Agente</th>
                   <th>Categoria</th>
                   <th class="right">Valor</th>
                   <th class="right">Ações</th>
@@ -240,7 +246,7 @@
                 <tr>
                   <th>Data</th>
                   <th>Ação</th>
-                  <th>Pessoa</th>
+                  <th>Agente</th>
                   <th>Categoria</th>
                   <th>Ano</th>
                   <th>Mês</th>
