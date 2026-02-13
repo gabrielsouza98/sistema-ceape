@@ -448,7 +448,6 @@ async function salvarCadastro(event) {
       throw new Error(erro.error || 'Erro ao salvar registro.');
     }
 
-    cadPessoa.value = '';
     cadPessoaSelect.value = '';
     cadPessoaNovo.value = '';
     cadPessoaNovoLabel.classList.add('hidden');
