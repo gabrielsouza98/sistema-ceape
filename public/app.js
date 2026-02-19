@@ -213,6 +213,7 @@ function renderizarGrafico(dados, filtros) {
   const pessoa = filtros.coordenador || filtros.pessoa || 'Todas';
   const categoria = filtros.categoria || 'Todas';
   const label = `${pessoa !== 'Todas' ? pessoa + ' - ' : ''}${categoria}`;
+  const isPercentCategoria = categoria === 'Inadimplência';
 
   const isSinglePoint = dados.length === 1;
 
@@ -248,7 +249,10 @@ function renderizarGrafico(dados, filtros) {
           padding: 6,
           clip: false,
           font: { size: 10, weight: '500' },
-          formatter: (value) => value.toLocaleString('pt-BR')
+          formatter: (value) =>
+            isPercentCategoria
+              ? value.toFixed(2).replace('.', ',') + ' %'
+              : value.toLocaleString('pt-BR')
         }
       },
       scales: {
@@ -257,7 +261,13 @@ function renderizarGrafico(dados, filtros) {
           grid: { color: 'rgba(31, 41, 55, 0.7)' }
         },
         y: {
-          ticks: { color: '#9ca3af' },
+          ticks: {
+            color: '#9ca3af',
+            callback: (val) =>
+              isPercentCategoria
+                ? Number(val).toFixed(2).replace('.', ',') + ' %'
+                : Number(val).toLocaleString('pt-BR')
+          },
           grid: { color: 'rgba(31, 41, 55, 0.7)' }
         }
       }
@@ -313,6 +323,8 @@ async function renderizarComparacao() {
   const serie1Map = new Map(comparacao.serie1.map((r) => [makeKey(r), r.valor]));
   const serie2Map = new Map(comparacao.serie2.map((r) => [makeKey(r), r.valor]));
 
+  const isPercentCategoria = categoria === 'Inadimplência';
+
   graficoComparacao = new Chart(ctx, {
     type: 'line',
     data: {
@@ -355,7 +367,10 @@ async function renderizarComparacao() {
           padding: 6,
           clip: false,
           font: { size: 9 },
-          formatter: (value) => value.toLocaleString('pt-BR')
+          formatter: (value) =>
+            isPercentCategoria
+              ? value.toFixed(2).replace('.', ',') + ' %'
+              : value.toLocaleString('pt-BR')
         }
       },
       scales: {
@@ -364,7 +379,13 @@ async function renderizarComparacao() {
           grid: { color: 'rgba(31, 41, 55, 0.7)' }
         },
         y: {
-          ticks: { color: '#9ca3af' },
+          ticks: {
+            color: '#9ca3af',
+            callback: (val) =>
+              isPercentCategoria
+                ? Number(val).toFixed(2).replace('.', ',') + ' %'
+                : Number(val).toLocaleString('pt-BR')
+          },
           grid: { color: 'rgba(31, 41, 55, 0.7)' }
         }
       }
@@ -437,6 +458,10 @@ async function salvarCadastro(event) {
     const url = wasEditing ? `/api/indicadores/${editingId}` : '/api/indicadores';
     const method = wasEditing ? 'PUT' : 'POST';
 
+    // Guardar filtros atuais da aba Gerenciar para restaurar depois do refresh
+    const gerenciarPessoaSelecionada = gerenciarPessoaSelect.value;
+    const gerenciarCategoriaSelecionada = gerenciarCategoriaSelect.value;
+
     const res = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
@@ -473,6 +498,10 @@ async function salvarCadastro(event) {
       popularSelect('compareAno1', '/api/anos'),
       popularSelect('compareAno2', '/api/anos')
     ]);
+
+    // Restaurar filtros da aba Gerenciar
+    gerenciarPessoaSelect.value = gerenciarPessoaSelecionada;
+    gerenciarCategoriaSelect.value = gerenciarCategoriaSelecionada;
 
     await carregarDados();
     await carregarGerenciar();
@@ -688,7 +717,7 @@ async function carregarLogs() {
 
     if (!dados.length) {
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="9" style="text-align:center; color: var(--muted);">Nenhum log encontrado.</td>';
+      tr.innerHTML = '<td colspan="5" style="text-align:center; color: var(--muted);">Nenhum log encontrado.</td>';
       logsBody.appendChild(tr);
       return;
     }
@@ -700,16 +729,58 @@ async function carregarLogs() {
         ? data.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' })
         : '-';
 
+      const formatValorLog = (antigo, novo) => {
+        const baseCategoria = row.categoria;
+        const normalizar = (valor) => {
+          if (valor === null || valor === undefined) return null;
+          const num = Number(valor);
+          if (Number.isNaN(num)) return String(valor);
+          if (baseCategoria === 'Inadimplência') {
+            return num.toFixed(2).replace('.', ',') + ' %';
+          }
+          return num.toLocaleString('pt-BR');
+        };
+        const a = normalizar(antigo);
+        const b = normalizar(novo);
+
+        if (a === null && b === null) return '-';
+        if (a === null) return b;
+        if (b === null || a === b) return a;
+        return `${a} → ${b}`;
+      };
+
+      const acaoLegivel =
+        row.acao === 'create'
+          ? 'Cadastro'
+          : row.acao === 'update'
+          ? 'Edição'
+          : row.acao === 'delete'
+          ? 'Exclusão'
+          : row.acao || '-';
+
+      const titulo =
+        row.categoria && row.mes && row.ano
+          ? `${row.categoria} • ${row.mes}/${row.ano}`
+          : row.categoria || '-';
+
+      const alvo = row.pessoa || '-';
+
+      const valorDesc = formatValorLog(row.valor_antigo, row.valor_novo);
+
+      const origemLegivel =
+        row.origem === 'delete-pessoa'
+          ? 'Remoção em massa por agente'
+          : row.origem === 'app'
+          ? 'Operação no sistema'
+          : row.origem || '-';
+
       tr.innerHTML = `
         <td>${dataFmt}</td>
-        <td>${row.acao || '-'}</td>
-        <td>${row.pessoa || '-'}</td>
-        <td>${row.categoria || '-'}</td>
-        <td>${row.ano ?? '-'}</td>
-        <td>${row.mes || '-'}</td>
-        <td class="right">${row.valor_antigo ?? '-'}</td>
-        <td class="right">${row.valor_novo ?? '-'}</td>
-        <td>${row.origem || '-'}</td>
+        <td>${acaoLegivel}</td>
+        <td>${alvo}</td>
+        <td>${titulo}</td>
+        <td class="right">${valorDesc}</td>
+        <td>${origemLegivel}</td>
       `;
       logsBody.appendChild(tr);
     }
@@ -785,7 +856,12 @@ tabelaGerenciarBody.addEventListener('click', async (event) => {
       ano: Number(cells[2].textContent),
       pessoa: cells[3].textContent === '-' ? '' : cells[3].textContent,
       categoria: cells[4].textContent,
-      valor: Number(String(cells[5].textContent).replace(/\./g, '').replace(',', '.'))
+      valor: Number(
+        String(cells[5].textContent)
+          .replace(/\s*%/g, '')   // remove símbolo de porcentagem
+          .replace(/\./g, '')     // remove pontos de milhar
+          .replace(',', '.')      // vírgula -> ponto decimal
+      )
     };
     entrarModoEdicao(row);
   } else if (action === 'delete') {

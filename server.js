@@ -248,11 +248,16 @@ app.post('/api/indicadores', async (req, res) => {
     }
 
     let v = String(valor).trim();
-    // aceitar tanto 1234,56 quanto 1.234,56 etc
-    if (v.includes(',')) {
-      v = v.replace(/\./g, '').replace(',', '.');
+    // Para Inadimplência (percentual), NÃO remover o ponto decimal, apenas trocar vírgula por ponto
+    if (categoria === 'Inadimplência') {
+      v = v.replace(',', '.');
     } else {
-      v = v.replace(/\./g, '');
+      // aceitar tanto 1234,56 quanto 1.234,56 etc
+      if (v.includes(',')) {
+        v = v.replace(/\./g, '').replace(',', '.');
+      } else {
+        v = v.replace(/\./g, '');
+      }
     }
     const valorNum = Number(v);
     if (Number.isNaN(valorNum)) {
@@ -355,10 +360,14 @@ app.put('/api/indicadores/:id', async (req, res) => {
     }
 
     let v = String(valor).trim();
-    if (v.includes(',')) {
-      v = v.replace(/\./g, '').replace(',', '.');
+    if (categoria === 'Inadimplência') {
+      v = v.replace(',', '.');
     } else {
-      v = v.replace(/\./g, '');
+      if (v.includes(',')) {
+        v = v.replace(/\./g, '').replace(',', '.');
+      } else {
+        v = v.replace(/\./g, '');
+      }
     }
     const valorNum = Number(v);
     if (Number.isNaN(valorNum)) {
