@@ -9,7 +9,31 @@
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   </head>
   <body>
-    <div class="app">
+    <!-- Tela de Login -->
+    <div id="loginScreen" class="login-screen" style="display: flex;">
+      <div class="login-container">
+        <div class="login-header">
+          <img src="logo-ceape.png" alt="CEAPE Microcrédito" class="login-logo" />
+          <h1>Dashboard CEAPE</h1>
+          <p>Faça login para acessar o sistema</p>
+        </div>
+        <form id="loginForm" class="login-form">
+          <label>
+            Usuário
+            <input id="loginUsername" type="text" placeholder="Digite seu usuário" required autocomplete="username" />
+          </label>
+          <label>
+            Senha
+            <input id="loginPassword" type="password" placeholder="Digite sua senha" required autocomplete="current-password" />
+          </label>
+          <button type="submit" class="btn-primary btn-login">Entrar</button>
+          <div id="loginError" class="login-error hidden"></div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Conteúdo Principal (oculto até login) -->
+    <div id="mainApp" class="app hidden" style="display: none;">
       <header class="topbar">
         <div class="brand">
           <span class="logo">
@@ -20,13 +44,14 @@
             <p>Indicadores financeiros e operacionais</p>
           </div>
         </div>
-        <div class="filters">
-          <label>
-            Agente
-            <select id="pessoaSelect">
-              <option value="">Nenhum</option>
-            </select>
-          </label>
+        <div class="topbar-right">
+          <div class="filters">
+            <label>
+              Agente
+              <select id="pessoaSelect">
+                <option value="">Nenhum</option>
+              </select>
+            </label>
           <label>
             Coordenador
             <select id="coordenadorSelect">
@@ -55,6 +80,10 @@
               <option value="">Todos</option>
             </select>
           </label>
+          </div>
+          <button id="logoutButton" class="btn-logout" title="Sair">
+            <span>Sair</span>
+          </button>
         </div>
       </header>
 

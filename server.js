@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pkg from 'pg';
+import crypto from 'crypto';
 
 const { Pool } = pkg;
 
@@ -12,11 +13,18 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MAX_LOGS_LIMIT = 1000;
+const MAX_TEXT_LENGTH = 120;
 
 // Se existir DATABASE_URL, usamos PostgreSQL (produção).
 // Caso contrário, usamos SQLite local (desenvolvimento).
 const USE_POSTGRES = !!process.env.DATABASE_URL;
-const LOGS_PASSWORD = process.env.LOGS_PASSWORD || 'admin123';
+const LOGS_PASSWORD = normalizarTexto(process.env.LOGS_PASSWORD);
+const ADMIN_PASSWORD = normalizarTexto(process.env.ADMIN_PASSWORD) || 'admin123';
+const ADMIN_USERNAME = normalizarTexto(process.env.ADMIN_USERNAME) || 'admin';
+
+// Armazenamento simples de tokens ativos (em produção, usar Redis ou banco)
+const activeTokens = new Map();
 
 let pgPool = null;
 let sqliteDb = null;
@@ -51,6 +59,87 @@ function mesParaOrdem(mes) {
     'dezembro': 12
   };
   return mapa[mes.toLowerCase()] ?? 0;
+}
+
+function normalizarTexto(valor) {
+  if (valor === undefined || valor === null) return '';
+  return String(valor).trim();
+}
+
+function hashSenha(senha) {
+  return crypto.createHash('sha256').update(senha).digest('hex');
+}
+
+function gerarToken() {
+  return crypto.randomBytes(32).toString('hex');
+}
+
+function verificarToken(token) {
+  if (!token) return false;
+  const tokenData = activeTokens.get(token);
+  if (!tokenData) return false;
+  
+  // Token expira após 24 horas
+  const agora = Date.now();
+  if (agora - tokenData.criadoEm > 24 * 60 * 60 * 1000) {
+    activeTokens.delete(token);
+    return false;
+  }
+  
+  return true;
+}
+
+function validarTextoCurto(valor, nomeCampo) {
+  if (!valor) {
+    return `${nomeCampo} é obrigatório.`;
+  }
+  if (valor.length > MAX_TEXT_LENGTH) {
+    return `${nomeCampo} excede o limite de ${MAX_TEXT_LENGTH} caracteres.`;
+  }
+  return null;
+}
+
+function parseAnoParam(valor, obrigatorio = false) {
+  const txt = normalizarTexto(valor);
+  if (!txt) {
+    return { ok: !obrigatorio, value: null };
+  }
+  const anoNum = Number(txt);
+  if (!Number.isInteger(anoNum)) {
+    return { ok: false, error: 'Ano inválido.' };
+  }
+  return { ok: true, value: anoNum };
+}
+
+function parseValorInformado(rawValor) {
+  const original = normalizarTexto(rawValor).replace(/\s+/g, '');
+  if (!original) return { ok: false, error: 'Valor inválido.' };
+
+  let normalizado = original;
+  const temVirgula = original.includes(',');
+  const temPonto = original.includes('.');
+
+  if (temVirgula && temPonto) {
+    if (original.lastIndexOf(',') > original.lastIndexOf('.')) {
+      normalizado = original.replace(/\./g, '').replace(',', '.');
+    } else {
+      normalizado = original.replace(/,/g, '');
+    }
+  } else if (temVirgula) {
+    normalizado = original.replace(',', '.');
+  } else if (temPonto && /^\d{1,3}(\.\d{3})+$/.test(original)) {
+    normalizado = original.replace(/\./g, '');
+  }
+
+  if (!/^[+-]?\d+(\.\d+)?$/.test(normalizado)) {
+    return { ok: false, error: 'Valor inválido.' };
+  }
+
+  const numero = Number(normalizado);
+  if (!Number.isFinite(numero) || numero < 0) {
+    return { ok: false, error: 'Valor inválido.' };
+  }
+  return { ok: true, value: numero };
 }
 
 // Helpers para acessar o banco de forma unificada (Postgres ou SQLite)
@@ -105,7 +194,29 @@ async function initDb() {
         valor_novo DOUBLE PRECISION,
         origem TEXT
       );
+
+      CREATE INDEX IF NOT EXISTS idx_indicadores_categoria_ano_mes
+        ON indicadores (categoria, ano, mes_ordem);
+      CREATE INDEX IF NOT EXISTS idx_indicadores_pessoa
+        ON indicadores (pessoa);
+      CREATE INDEX IF NOT EXISTS idx_logs_criado_em
+        ON logs (criado_em DESC);
+
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id SERIAL PRIMARY KEY,
+        username TEXT NOT NULL UNIQUE,
+        senha_hash TEXT NOT NULL,
+        criado_em TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
+
+    // Criar usuário admin padrão se não existir
+    const adminHash = hashSenha(ADMIN_PASSWORD);
+    await pgPool.query(`
+      INSERT INTO usuarios (username, senha_hash)
+      VALUES ($1, $2)
+      ON CONFLICT (username) DO NOTHING
+    `, [ADMIN_USERNAME, adminHash]);
   } else {
     // Caminho do banco SQLite local
     const dbPath = process.env.DB_PATH || path.join(__dirname, 'dados.db');
@@ -136,7 +247,26 @@ async function initDb() {
         valor_novo REAL,
         origem TEXT
       );
+
+      CREATE INDEX IF NOT EXISTS idx_indicadores_categoria_ano_mes
+        ON indicadores (categoria, ano, mes_ordem);
+      CREATE INDEX IF NOT EXISTS idx_indicadores_pessoa
+        ON indicadores (pessoa);
+      CREATE INDEX IF NOT EXISTS idx_logs_criado_em
+        ON logs (criado_em DESC);
+
+      CREATE TABLE IF NOT EXISTS usuarios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL UNIQUE,
+        senha_hash TEXT NOT NULL,
+        criado_em DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
+
+    // Criar usuário admin padrão se não existir
+    const adminHash = hashSenha(ADMIN_PASSWORD);
+    const stmt = sqliteDb.prepare('INSERT OR IGNORE INTO usuarios (username, senha_hash) VALUES (?, ?)');
+    stmt.run(ADMIN_USERNAME, adminHash);
   }
 }
 
@@ -182,11 +312,124 @@ async function registrarLog({
   }
 }
 
+app.disable('x-powered-by');
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '100kb' }));
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+app.use((req, _res, next) => {
+  req.requestStartAt = Date.now();
+  next();
+});
+app.use((req, res, next) => {
+  res.on('finish', () => {
+    const ms = Date.now() - req.requestStartAt;
+    console.log(`${req.method} ${req.originalUrl} -> ${res.statusCode} (${ms}ms)`);
+  });
+  next();
+});
+
+// Middleware de autenticação
+async function requireAuth(req, res, next) {
+  const token = req.headers['x-auth-token'] || req.query.token;
+  
+  if (!token || !verificarToken(token)) {
+    return res.status(401).json({ error: 'Não autenticado. Faça login novamente.' });
+  }
+  
+  req.token = token;
+  next();
+}
+
+app.get('/api/health', async (_req, res) => {
+  try {
+    if (USE_POSTGRES) {
+      await pgPool.query('SELECT 1');
+    } else {
+      sqliteDb.prepare('SELECT 1').get();
+    }
+    res.json({
+      status: 'ok',
+      database: USE_POSTGRES ? 'postgres' : 'sqlite',
+      timestamp: new Date().toISOString()
+    });
+  } catch (e) {
+    res.status(500).json({
+      status: 'error',
+      error: e.message
+    });
+  }
+});
+
+// Endpoint de login
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { username, senha } = req.body;
+    
+    if (!username || !senha) {
+      return res.status(400).json({ error: 'Username e senha são obrigatórios.' });
+    }
+
+    const senhaHash = hashSenha(senha);
+    let usuario = null;
+
+    if (USE_POSTGRES) {
+      const rows = await dbQueryAll(
+        'SELECT id, username, senha_hash FROM usuarios WHERE username = $1',
+        [normalizarTexto(username)]
+      );
+      usuario = rows[0] || null;
+    } else {
+      const rows = await dbQueryAll(
+        'SELECT id, username, senha_hash FROM usuarios WHERE username = ?',
+        [normalizarTexto(username)]
+      );
+      usuario = rows[0] || null;
+    }
+
+    if (!usuario || usuario.senha_hash !== senhaHash) {
+      return res.status(401).json({ error: 'Credenciais inválidas.' });
+    }
+
+    const token = gerarToken();
+    activeTokens.set(token, {
+      userId: usuario.id,
+      username: usuario.username,
+      criadoEm: Date.now()
+    });
+
+    res.json({
+      token,
+      username: usuario.username
+    });
+  } catch (e) {
+    console.error('Erro em POST /api/auth/login:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Endpoint para verificar token
+app.get('/api/auth/verify', requireAuth, async (req, res) => {
+  const tokenData = activeTokens.get(req.token);
+  res.json({
+    valid: true,
+    username: tokenData.username
+  });
+});
+
+// Endpoint para logout
+app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  activeTokens.delete(req.token);
+  res.json({ message: 'Logout realizado com sucesso.' });
+});
+
 
 // Buscar indicadores
-app.get('/api/indicadores', async (req, res) => {
+app.get('/api/indicadores', requireAuth, async (req, res) => {
   try {
     const { categoria, pessoa, ano, mes } = req.query;
 
@@ -199,19 +442,23 @@ app.get('/api/indicadores', async (req, res) => {
 
     if (categoria) {
       sql += ` AND categoria = ${USE_POSTGRES ? '$' + (params.length + 1) : '?'}`;
-      params.push(categoria);
+      params.push(normalizarTexto(categoria));
     }
     if (pessoa) {
       sql += ` AND pessoa = ${USE_POSTGRES ? '$' + (params.length + 1) : '?'}`;
-      params.push(pessoa);
+      params.push(normalizarTexto(pessoa));
     }
     if (ano) {
+      const parsedAno = parseAnoParam(ano);
+      if (!parsedAno.ok) {
+        return res.status(400).json({ error: parsedAno.error });
+      }
       sql += ` AND ano = ${USE_POSTGRES ? '$' + (params.length + 1) : '?'}`;
-      params.push(parseInt(ano, 10));
+      params.push(parsedAno.value);
     }
     if (mes) {
       sql += ` AND mes = ${USE_POSTGRES ? '$' + (params.length + 1) : '?'}`;
-      params.push(mes);
+      params.push(normalizarTexto(mes));
     }
 
     sql += ' ORDER BY ano, mes_ordem';
@@ -225,11 +472,26 @@ app.get('/api/indicadores', async (req, res) => {
 });
 
 // Criar novo registro de indicador (cadastro manual)
-app.post('/api/indicadores', async (req, res) => {
+app.post('/api/indicadores', requireAuth, async (req, res) => {
   try {
-    const { pessoa, categoria, ano, mes, valor } = req.body || {};
+    const pessoa = normalizarTexto(req.body?.pessoa);
+    const categoria = normalizarTexto(req.body?.categoria);
+    const mes = normalizarTexto(req.body?.mes);
+    const { valor } = req.body || {};
 
-    if (!pessoa || !categoria || !ano || !mes || valor === undefined || valor === null) {
+    const erroPessoa = validarTextoCurto(pessoa, 'Pessoa');
+    if (erroPessoa) {
+      return res.status(400).json({ error: erroPessoa });
+    }
+    const erroCategoria = validarTextoCurto(categoria, 'Categoria');
+    if (erroCategoria) {
+      return res.status(400).json({ error: erroCategoria });
+    }
+    const erroMes = validarTextoCurto(mes, 'Mês');
+    if (erroMes) {
+      return res.status(400).json({ error: erroMes });
+    }
+    if (valor === undefined || valor === null) {
       return res.status(400).json({ error: 'pessoa, categoria, ano, mes e valor são obrigatórios.' });
     }
 
@@ -237,32 +499,22 @@ app.post('/api/indicadores', async (req, res) => {
       return res.status(400).json({ error: 'Categoria inválida.' });
     }
 
-    const anoNum = Number(ano);
-    if (!Number.isInteger(anoNum)) {
-      return res.status(400).json({ error: 'Ano inválido.' });
+    const parsedAno = parseAnoParam(req.body?.ano, true);
+    if (!parsedAno.ok) {
+      return res.status(400).json({ error: parsedAno.error });
     }
+    const anoNum = parsedAno.value;
 
     const mesOrdem = mesParaOrdem(mes);
     if (!mesOrdem) {
       return res.status(400).json({ error: 'Mês inválido.' });
     }
 
-    let v = String(valor).trim();
-    // Para Inadimplência (percentual), NÃO remover o ponto decimal, apenas trocar vírgula por ponto
-    if (categoria === 'Inadimplência') {
-      v = v.replace(',', '.');
-    } else {
-      // aceitar tanto 1234,56 quanto 1.234,56 etc
-      if (v.includes(',')) {
-        v = v.replace(/\./g, '').replace(',', '.');
-      } else {
-        v = v.replace(/\./g, '');
-      }
+    const parsedValor = parseValorInformado(valor);
+    if (!parsedValor.ok) {
+      return res.status(400).json({ error: parsedValor.error });
     }
-    const valorNum = Number(v);
-    if (Number.isNaN(valorNum)) {
-      return res.status(400).json({ error: 'Valor inválido.' });
-    }
+    const valorNum = parsedValor.value;
 
     if (USE_POSTGRES) {
       const result = await dbRun(
@@ -332,16 +584,31 @@ app.post('/api/indicadores', async (req, res) => {
 });
 
 // Atualizar registro de indicador (edição)
-app.put('/api/indicadores/:id', async (req, res) => {
+app.put('/api/indicadores/:id', requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) {
       return res.status(400).json({ error: 'ID inválido.' });
     }
 
-    const { pessoa, categoria, ano, mes, valor } = req.body || {};
+    const pessoa = normalizarTexto(req.body?.pessoa);
+    const categoria = normalizarTexto(req.body?.categoria);
+    const mes = normalizarTexto(req.body?.mes);
+    const { valor } = req.body || {};
 
-    if (!pessoa || !categoria || !ano || !mes || valor === undefined || valor === null) {
+    const erroPessoa = validarTextoCurto(pessoa, 'Pessoa');
+    if (erroPessoa) {
+      return res.status(400).json({ error: erroPessoa });
+    }
+    const erroCategoria = validarTextoCurto(categoria, 'Categoria');
+    if (erroCategoria) {
+      return res.status(400).json({ error: erroCategoria });
+    }
+    const erroMes = validarTextoCurto(mes, 'Mês');
+    if (erroMes) {
+      return res.status(400).json({ error: erroMes });
+    }
+    if (valor === undefined || valor === null) {
       return res.status(400).json({ error: 'pessoa, categoria, ano, mes e valor são obrigatórios.' });
     }
 
@@ -349,30 +616,22 @@ app.put('/api/indicadores/:id', async (req, res) => {
       return res.status(400).json({ error: 'Categoria inválida.' });
     }
 
-    const anoNum = Number(ano);
-    if (!Number.isInteger(anoNum)) {
-      return res.status(400).json({ error: 'Ano inválido.' });
+    const parsedAno = parseAnoParam(req.body?.ano, true);
+    if (!parsedAno.ok) {
+      return res.status(400).json({ error: parsedAno.error });
     }
+    const anoNum = parsedAno.value;
 
     const mesOrdem = mesParaOrdem(mes);
     if (!mesOrdem) {
       return res.status(400).json({ error: 'Mês inválido.' });
     }
 
-    let v = String(valor).trim();
-    if (categoria === 'Inadimplência') {
-      v = v.replace(',', '.');
-    } else {
-      if (v.includes(',')) {
-        v = v.replace(/\./g, '').replace(',', '.');
-      } else {
-        v = v.replace(/\./g, '');
-      }
+    const parsedValor = parseValorInformado(valor);
+    if (!parsedValor.ok) {
+      return res.status(400).json({ error: parsedValor.error });
     }
-    const valorNum = Number(v);
-    if (Number.isNaN(valorNum)) {
-      return res.status(400).json({ error: 'Valor inválido.' });
-    }
+    const valorNum = parsedValor.value;
 
     // Buscar valor antigo para log
     let antigo = null;
@@ -446,7 +705,7 @@ app.put('/api/indicadores/:id', async (req, res) => {
 });
 
 // Remover um registro específico
-app.delete('/api/indicadores/:id', async (req, res) => {
+app.delete('/api/indicadores/:id', requireAuth, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) {
@@ -495,12 +754,23 @@ app.delete('/api/indicadores/:id', async (req, res) => {
 });
 
 // Comparação de séries
-app.get('/api/comparar', async (req, res) => {
+app.get('/api/comparar', requireAuth, async (req, res) => {
   try {
-    const { categoria, pessoa1, pessoa2, ano1, ano2, mes } = req.query;
+    const categoria = normalizarTexto(req.query.categoria);
+    const pessoa1 = normalizarTexto(req.query.pessoa1);
+    const pessoa2 = normalizarTexto(req.query.pessoa2);
+    const mes = normalizarTexto(req.query.mes);
+    const parsedAno1 = parseAnoParam(req.query.ano1);
+    const parsedAno2 = parseAnoParam(req.query.ano2);
 
     if (!categoria) {
       return res.status(400).json({ error: 'Categoria é obrigatória para comparação' });
+    }
+    if (!CATEGORIAS.includes(categoria)) {
+      return res.status(400).json({ error: 'Categoria inválida para comparação.' });
+    }
+    if (!parsedAno1.ok || !parsedAno2.ok) {
+      return res.status(400).json({ error: 'Ano inválido para comparação.' });
     }
 
     const buildQuery = (pessoa, ano) => {
@@ -517,7 +787,7 @@ app.get('/api/comparar', async (req, res) => {
       }
       if (ano) {
         sql += ` AND ano = ${USE_POSTGRES ? '$' + (params.length + 1) : '?'}`;
-        params.push(parseInt(ano, 10));
+        params.push(ano);
       }
       if (mes) {
         sql += ` AND mes = ${USE_POSTGRES ? '$' + (params.length + 1) : '?'}`;
@@ -528,8 +798,8 @@ app.get('/api/comparar', async (req, res) => {
       return { sql, params };
     };
 
-    const q1 = buildQuery(pessoa1, ano1);
-    const q2 = buildQuery(pessoa2, ano2);
+    const q1 = buildQuery(pessoa1, parsedAno1.value);
+    const q2 = buildQuery(pessoa2, parsedAno2.value);
 
     const [dados1, dados2] = await Promise.all([
       dbQueryAll(q1.sql, q1.params),
@@ -540,8 +810,8 @@ app.get('/api/comparar', async (req, res) => {
       serie1: dados1,
       serie2: dados2,
       labels: {
-        serie1: pessoa1 ? `${pessoa1} ${ano1 ? `(${ano1})` : ''}` : `Ano ${ano1 || 'Todos'}`,
-        serie2: pessoa2 ? `${pessoa2} ${ano2 ? `(${ano2})` : ''}` : `Ano ${ano2 || 'Todos'}`
+        serie1: pessoa1 ? `${pessoa1} ${parsedAno1.value ? `(${parsedAno1.value})` : ''}` : `Ano ${parsedAno1.value || 'Todos'}`,
+        serie2: pessoa2 ? `${pessoa2} ${parsedAno2.value ? `(${parsedAno2.value})` : ''}` : `Ano ${parsedAno2.value || 'Todos'}`
       }
     });
   } catch (e) {
@@ -550,12 +820,12 @@ app.get('/api/comparar', async (req, res) => {
   }
 });
 
-app.get('/api/categorias', (_req, res) => {
+app.get('/api/categorias', requireAuth, (_req, res) => {
   res.json(CATEGORIAS);
 });
 
 // Lista de pessoas distintas
-app.get('/api/pessoas', async (_req, res) => {
+app.get('/api/pessoas', requireAuth, async (_req, res) => {
   try {
     const sql = `
       SELECT DISTINCT pessoa
@@ -572,7 +842,7 @@ app.get('/api/pessoas', async (_req, res) => {
 });
 
 // Remover todos os dados de uma pessoa
-app.delete('/api/pessoas/:pessoa', async (req, res) => {
+app.delete('/api/pessoas/:pessoa', requireAuth, async (req, res) => {
   try {
     const pessoa = decodeURIComponent(req.params.pessoa);
     if (!pessoa) {
@@ -622,7 +892,7 @@ app.delete('/api/pessoas/:pessoa', async (req, res) => {
 });
 
 // Anos distintos
-app.get('/api/anos', async (_req, res) => {
+app.get('/api/anos', requireAuth, async (_req, res) => {
   try {
     const sql = `
       SELECT DISTINCT ano
@@ -638,7 +908,7 @@ app.get('/api/anos', async (_req, res) => {
 });
 
 // Meses distintos (ordenados por mes_ordem)
-app.get('/api/meses', async (_req, res) => {
+app.get('/api/meses', requireAuth, async (_req, res) => {
   try {
     const sql = `
       SELECT DISTINCT mes, mes_ordem
@@ -654,7 +924,7 @@ app.get('/api/meses', async (_req, res) => {
 });
 
 // Logs (histórico de alterações)
-app.get('/api/logs', async (req, res) => {
+app.get('/api/logs', requireAuth, async (req, res) => {
   try {
     if (LOGS_PASSWORD) {
       const provided =
@@ -665,7 +935,10 @@ app.get('/api/logs', async (req, res) => {
       }
     }
 
-    const limit = Math.min(Number(req.query.limit) || 200, 1000);
+    const parsedLimit = Number(req.query.limit);
+    const limit = Number.isFinite(parsedLimit)
+      ? Math.max(1, Math.min(Math.trunc(parsedLimit), MAX_LOGS_LIMIT))
+      : 200;
 
     const sql = USE_POSTGRES
       ? `
@@ -691,15 +964,63 @@ app.get('/api/logs', async (req, res) => {
   }
 });
 
-app.use(express.static(path.join(__dirname, 'public')));
+// Servir arquivos estáticos (exceto index.html que será protegido pelo frontend)
+app.use(express.static(path.join(__dirname, 'public'), {
+  index: false // Não servir index.html automaticamente
+}));
+
+// Servir index.html apenas se autenticado (verificação no frontend)
+app.get('/', (_req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+let server;
+
+async function shutdown() {
+  console.log('Encerrando aplicação...');
+  const tasks = [];
+
+  if (server) {
+    tasks.push(
+      new Promise((resolve) => {
+        server.close(() => resolve());
+      })
+    );
+  }
+
+  if (pgPool) {
+    tasks.push(pgPool.end().catch((e) => console.error('Erro ao fechar pool Postgres:', e)));
+  }
+
+  await Promise.all(tasks);
+  process.exit(0);
+}
+
+process.on('SIGINT', shutdown);
+process.on('SIGTERM', shutdown);
+process.on('unhandledRejection', (error) => {
+  console.error('Erro não tratado (Promise):', error);
+});
+process.on('uncaughtException', (error) => {
+  console.error('Exceção não tratada:', error);
+  process.exit(1);
+});
 
 // Inicializar banco e só então subir o servidor
 initDb()
   .then(() => {
-    app.listen(PORT, () => {
+    server = app.listen(PORT, () => {
       console.log(
         `Servidor rodando em http://localhost:${PORT} usando ${USE_POSTGRES ? 'PostgreSQL' : 'SQLite'}`
       );
+    });
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        console.error(`Porta ${PORT} já está em uso.`);
+      } else {
+        console.error('Erro no servidor HTTP:', err);
+      }
+      process.exit(1);
     });
   })
   .catch((err) => {

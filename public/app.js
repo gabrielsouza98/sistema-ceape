@@ -1,3 +1,13 @@
+// Elementos de autenticação
+const loginScreen = document.getElementById('loginScreen');
+const mainApp = document.getElementById('mainApp');
+const loginForm = document.getElementById('loginForm');
+const loginUsername = document.getElementById('loginUsername');
+const loginPassword = document.getElementById('loginPassword');
+const loginError = document.getElementById('loginError');
+const logoutButton = document.getElementById('logoutButton');
+
+// Elementos principais
 const categoriaSelect = document.getElementById('categoriaSelect');
 const pessoaSelect = document.getElementById('pessoaSelect');
 const coordenadorSelect = document.getElementById('coordenadorSelect');
@@ -38,9 +48,136 @@ let grafico;
 let graficoComparacao;
 let editingId = null;
 let logsPassword = '';
+let salvarCadastroEmAndamento = false;
+let carregarDadosController = null;
+let carregarGerenciarController = null;
+const API_TIMEOUT_MS = 15000;
+
+// Gerenciamento de autenticação
+let authToken = localStorage.getItem('authToken') || null;
+
+// Função para obter headers de autenticação
+function getAuthHeaders() {
+  const headers = {};
+  if (authToken) {
+    headers['x-auth-token'] = authToken;
+  }
+  return headers;
+}
+
+// Função para fazer requisições autenticadas
+async function fetchAuth(url, options = {}) {
+  // Não requer autenticação para rotas de login
+  const isAuthRoute = url.includes('/api/auth/login');
+  
+  const headers = {
+    ...(isAuthRoute ? {} : getAuthHeaders()),
+    ...(options.headers || {})
+  };
+  
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
+  
+  // Só fazer logout automático se não for rota de login e retornar 401
+  if (!isAuthRoute && response.status === 401) {
+    logout();
+    throw new Error('Sessão expirada. Faça login novamente.');
+  }
+  
+  return response;
+}
 
 if (window.Chart && window.ChartDataLabels) {
   Chart.register(window.ChartDataLabels);
+}
+
+// Funções de autenticação
+async function fazerLogin(username, senha) {
+  try {
+    const response = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({ username, senha })
+    });
+
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data.error || 'Erro ao fazer login');
+    }
+
+    const data = await response.json();
+    authToken = data.token;
+    localStorage.setItem('authToken', authToken);
+    return true;
+  } catch (error) {
+    throw error;
+  }
+}
+
+async function verificarToken() {
+  if (!authToken) return false;
+  
+  try {
+    const response = await fetch('/api/auth/verify', {
+      headers: {
+        'x-auth-token': authToken
+      }
+    });
+    return response.ok;
+  } catch (error) {
+    return false;
+  }
+}
+
+function logout() {
+  if (authToken) {
+    fetchAuth('/api/auth/logout', { method: 'POST' }).catch(() => {});
+  }
+  authToken = null;
+  localStorage.removeItem('authToken');
+  mostrarTelaLogin();
+}
+
+function mostrarTelaLogin() {
+  if (loginScreen) {
+    loginScreen.classList.remove('hidden');
+    loginScreen.style.display = 'flex';
+  }
+  if (mainApp) {
+    mainApp.classList.add('hidden');
+    mainApp.style.display = 'none';
+  }
+}
+
+function mostrarApp() {
+  if (loginScreen) {
+    loginScreen.classList.add('hidden');
+    loginScreen.style.display = 'none';
+  }
+  if (mainApp) {
+    mainApp.classList.remove('hidden');
+    mainApp.style.display = '';
+  }
+}
+
+async function verificarAutenticacao() {
+  if (!authToken) {
+    mostrarTelaLogin();
+    return false;
+  }
+
+  const isValid = await verificarToken();
+  if (!isValid) {
+    logout();
+    return false;
+  }
+
+  mostrarApp();
+  return true;
 }
 
 function showToast(message, type = 'info') {
@@ -50,9 +187,12 @@ function showToast(message, type = 'info') {
   const toast = document.createElement('div');
   toast.className = `toast toast-${type}`;
   toast.innerHTML = `
-    <span>${message}</span>
+    <span class="toast-message"></span>
     <button class="toast-close" aria-label="Fechar notificação">&times;</button>
   `;
+
+  const toastMessage = toast.querySelector('.toast-message');
+  if (toastMessage) toastMessage.textContent = String(message);
 
   const close = () => {
     toast.style.opacity = '0';
@@ -66,6 +206,35 @@ function showToast(message, type = 'info') {
   container.appendChild(toast);
 }
 
+function isAbortError(error) {
+  return error && (error.name === 'AbortError' || String(error.message).includes('aborted'));
+}
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function setButtonLoading(button, loading, loadingText, defaultText) {
+  if (!button) return;
+  button.disabled = loading;
+  button.textContent = loading ? loadingText : defaultText;
+}
+
+function formatarDadoLabel(value, isPercentCategoria) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) {
+    return '';
+  }
+  const num = Number(value);
+  return isPercentCategoria
+    ? num.toFixed(2).replace('.', ',') + ' %'
+    : num.toLocaleString('pt-BR');
+}
+
 const GRUPOS = {
   'Coordenador Edivaldo': ['Eudes', 'Josiel', 'Atailson', 'Rangel'],
   'Coordenador Glenyo': ['Jessyca', 'Carlos', 'Helio', 'Xavier', 'Dirceu', 'Jose de Freitas', 'Uniao', 'Altos'],
@@ -73,10 +242,30 @@ const GRUPOS = {
   'Coordenador Parnaiba': ['Alessia', 'Marcos', 'Renan']
 };
 
-async function fetchJSON(url) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('Erro ao carregar ' + url);
-  return res.json();
+async function fetchJSON(url, options = {}) {
+  const { timeoutMs = API_TIMEOUT_MS, ...fetchOptions } = options;
+  const controller = !fetchOptions.signal ? new AbortController() : null;
+  const timer = controller
+    ? setTimeout(() => controller.abort(), timeoutMs)
+    : null;
+
+  try {
+    const res = await fetchAuth(url, {
+      ...fetchOptions,
+      signal: fetchOptions.signal || controller.signal
+    });
+
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body.error || 'Erro ao carregar ' + url);
+    }
+    if (res.status === 204) {
+      return null;
+    }
+    return await res.json();
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 function formatValor(valor, categoria) {
@@ -103,12 +292,17 @@ function atualizarTabela(dados) {
   }
   for (const row of dados) {
     const tr = document.createElement('tr');
+    const mes = escapeHtml(row.mes);
+    const ano = escapeHtml(row.ano);
+    const pessoa = escapeHtml(row.pessoa || '-');
+    const categoria = escapeHtml(row.categoria);
+    const valor = escapeHtml(formatValor(row.valor, row.categoria));
     tr.innerHTML = `
-      <td>${row.mes}</td>
-      <td>${row.ano}</td>
-      <td>${row.pessoa || '-'}</td>
-      <td>${row.categoria}</td>
-      <td class="right">${formatValor(row.valor, row.categoria)}</td>
+      <td>${mes}</td>
+      <td>${ano}</td>
+      <td>${pessoa}</td>
+      <td>${categoria}</td>
+      <td class="right">${valor}</td>
     `;
     tabelaBody.appendChild(tr);
   }
@@ -124,17 +318,23 @@ function atualizarTabelaGerenciar(dados) {
   }
   for (const row of dados) {
     const tr = document.createElement('tr');
+    const id = Number(row.id);
+    const mes = escapeHtml(row.mes);
+    const ano = escapeHtml(row.ano);
+    const pessoa = escapeHtml(row.pessoa || '-');
+    const categoria = escapeHtml(row.categoria);
+    const valor = escapeHtml(formatValor(row.valor, row.categoria));
     tr.innerHTML = `
-      <td>${row.id}</td>
-      <td>${row.mes}</td>
-      <td>${row.ano}</td>
-      <td>${row.pessoa || '-'}</td>
-      <td>${row.categoria}</td>
-      <td class="right">${formatValor(row.valor, row.categoria)}</td>
+      <td>${id}</td>
+      <td>${mes}</td>
+      <td>${ano}</td>
+      <td>${pessoa}</td>
+      <td>${categoria}</td>
+      <td class="right">${valor}</td>
       <td class="right">
         <div class="actions">
-          <button class="btn-sm" data-action="edit" data-id="${row.id}">Editar</button>
-          <button class="btn-sm danger" data-action="delete" data-id="${row.id}">Remover</button>
+          <button class="btn-sm" data-action="edit" data-id="${id}">Editar</button>
+          <button class="btn-sm danger" data-action="delete" data-id="${id}">Remover</button>
         </div>
       </td>
     `;
@@ -192,10 +392,13 @@ function renderizarCards(dados, filtros) {
   for (const card of cards) {
     const div = document.createElement('div');
     div.className = 'card';
+    const titulo = escapeHtml(card.titulo);
+    const valor = escapeHtml(card.valor);
+    const sub = escapeHtml(card.sub);
     div.innerHTML = `
-      <div class="card-title">${card.titulo}</div>
-      <div class="card-value">${card.valor}</div>
-      <div class="card-sub">${card.sub}</div>
+      <div class="card-title">${titulo}</div>
+      <div class="card-value">${valor}</div>
+      <div class="card-sub">${sub}</div>
     `;
     cardsResumo.appendChild(div);
   }
@@ -249,10 +452,7 @@ function renderizarGrafico(dados, filtros) {
           padding: 6,
           clip: false,
           font: { size: 10, weight: '500' },
-          formatter: (value) =>
-            isPercentCategoria
-              ? value.toFixed(2).replace('.', ',') + ' %'
-              : value.toLocaleString('pt-BR')
+          formatter: (value) => formatarDadoLabel(value, isPercentCategoria)
         }
       },
       scales: {
@@ -278,123 +478,130 @@ function renderizarGrafico(dados, filtros) {
 }
 
 async function renderizarComparacao() {
-  const categoria = categoriaSelect.value;
-  if (!categoria) {
-    showToast('Selecione uma categoria para comparar.', 'info');
-    return;
-  }
-
-  const pessoa1 = comparePessoa1.value;
-  const pessoa2 = comparePessoa2.value;
-  const ano1 = compareAno1.value;
-  const ano2 = compareAno2.value;
-
-  const params = new URLSearchParams({ categoria });
-  if (pessoa1) params.append('pessoa1', pessoa1);
-  if (pessoa2) params.append('pessoa2', pessoa2);
-  if (ano1) params.append('ano1', ano1);
-  if (ano2) params.append('ano2', ano2);
-
-  const comparacao = await fetchJSON(`/api/comparar?${params}`);
-
-  const ctx = document.getElementById('graficoComparacao').getContext('2d');
-
-  if (graficoComparacao) {
-    graficoComparacao.destroy();
-  }
-
-  // Montar eixo em ordem cronológica (ano + mes_ordem)
-  const makeKey = (r) => `${r.ano}-${String(r.mes_ordem).padStart(2, '0')}`;
-
-  const eixoMap = new Map();
-  for (const r of [...comparacao.serie1, ...comparacao.serie2]) {
-    const key = makeKey(r);
-    if (!eixoMap.has(key)) {
-      eixoMap.set(key, { ano: r.ano, mes: r.mes, mes_ordem: r.mes_ordem });
+  try {
+    const categoria = categoriaSelect.value;
+    if (!categoria) {
+      showToast('Selecione uma categoria para comparar.', 'info');
+      return;
     }
-  }
 
-  const eixo = Array.from(eixoMap.values()).sort(
-    (a, b) => a.ano - b.ano || a.mes_ordem - b.mes_ordem
-  );
+    const pessoa1 = comparePessoa1.value;
+    const pessoa2 = comparePessoa2.value;
+    const ano1 = compareAno1.value;
+    const ano2 = compareAno2.value;
 
-  const labels = eixo.map((p) => `${p.mes}/${p.ano}`);
+    const params = new URLSearchParams({ categoria });
+    if (pessoa1) params.append('pessoa1', pessoa1);
+    if (pessoa2) params.append('pessoa2', pessoa2);
+    if (ano1) params.append('ano1', ano1);
+    if (ano2) params.append('ano2', ano2);
 
-  const serie1Map = new Map(comparacao.serie1.map((r) => [makeKey(r), r.valor]));
-  const serie2Map = new Map(comparacao.serie2.map((r) => [makeKey(r), r.valor]));
+    const comparacao = await fetchJSON(`/api/comparar?${params}`);
+    if (!comparacao.serie1?.length && !comparacao.serie2?.length) {
+      showToast('Sem dados para comparacao com os filtros atuais.', 'info');
+      return;
+    }
 
-  const isPercentCategoria = categoria === 'Inadimplência';
+    const ctx = document.getElementById('graficoComparacao').getContext('2d');
 
-  graficoComparacao = new Chart(ctx, {
-    type: 'line',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: comparacao.labels.serie1,
-          data: eixo.map((p) => serie1Map.get(makeKey(p)) ?? null),
-          borderColor: '#38bdf8',
-          backgroundColor: 'rgba(56, 189, 248, 0.18)',
-          tension: 0.35,
-          fill: false,
-          pointRadius: 3,
-          pointHoverRadius: 5
-        },
-        {
-          label: comparacao.labels.serie2,
-          data: eixo.map((p) => serie2Map.get(makeKey(p)) ?? null),
-          borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245, 158, 11, 0.18)',
-          tension: 0.35,
-          fill: false,
-          pointRadius: 3,
-          pointHoverRadius: 5
-        }
-      ]
-    },
-    options: {
-      plugins: {
-        legend: { 
-          display: true,
-          labels: { color: '#9ca3af' }
-        },
-        datalabels: {
-          color: '#e5e7eb',
-          // acima do ponto
-          anchor: 'start',
-          align: 'end',
-          offset: 10,
-          padding: 6,
-          clip: false,
-          font: { size: 9 },
-          formatter: (value) =>
-            isPercentCategoria
-              ? value.toFixed(2).replace('.', ',') + ' %'
-              : value.toLocaleString('pt-BR')
-        }
-      },
-      scales: {
-        x: {
-          ticks: { color: '#9ca3af' },
-          grid: { color: 'rgba(31, 41, 55, 0.7)' }
-        },
-        y: {
-          ticks: {
-            color: '#9ca3af',
-            callback: (val) =>
-              isPercentCategoria
-                ? Number(val).toFixed(2).replace('.', ',') + ' %'
-                : Number(val).toLocaleString('pt-BR')
-          },
-          grid: { color: 'rgba(31, 41, 55, 0.7)' }
-        }
+    if (graficoComparacao) {
+      graficoComparacao.destroy();
+    }
+
+    // Montar eixo em ordem cronologica (ano + mes_ordem)
+    const makeKey = (r) => `${r.ano}-${String(r.mes_ordem).padStart(2, '0')}`;
+
+    const eixoMap = new Map();
+    for (const r of [...comparacao.serie1, ...comparacao.serie2]) {
+      const key = makeKey(r);
+      if (!eixoMap.has(key)) {
+        eixoMap.set(key, { ano: r.ano, mes: r.mes, mes_ordem: r.mes_ordem });
       }
     }
-  });
-}
 
+    const eixo = Array.from(eixoMap.values()).sort(
+      (a, b) => a.ano - b.ano || a.mes_ordem - b.mes_ordem
+    );
+
+    const labels = eixo.map((p) => `${p.mes}/${p.ano}`);
+
+    const serie1Map = new Map(comparacao.serie1.map((r) => [makeKey(r), r.valor]));
+    const serie2Map = new Map(comparacao.serie2.map((r) => [makeKey(r), r.valor]));
+
+    const isPercentCategoria = categoria === 'Inadimplência';
+
+    graficoComparacao = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels,
+        datasets: [
+          {
+            label: comparacao.labels.serie1,
+            data: eixo.map((p) => serie1Map.get(makeKey(p)) ?? null),
+            borderColor: '#38bdf8',
+            backgroundColor: 'rgba(56, 189, 248, 0.18)',
+            tension: 0.35,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 5
+          },
+          {
+            label: comparacao.labels.serie2,
+            data: eixo.map((p) => serie2Map.get(makeKey(p)) ?? null),
+            borderColor: '#f59e0b',
+            backgroundColor: 'rgba(245, 158, 11, 0.18)',
+            tension: 0.35,
+            fill: false,
+            pointRadius: 3,
+            pointHoverRadius: 5
+          }
+        ]
+      },
+      options: {
+        plugins: {
+          legend: {
+            display: true,
+            labels: { color: '#9ca3af' }
+          },
+          datalabels: {
+            color: '#e5e7eb',
+            // acima do ponto
+            anchor: 'start',
+            align: 'end',
+            offset: 10,
+            padding: 6,
+            clip: false,
+            font: { size: 9 },
+            formatter: (value) => formatarDadoLabel(value, isPercentCategoria)
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: '#9ca3af' },
+            grid: { color: 'rgba(31, 41, 55, 0.7)' }
+          },
+          y: {
+            ticks: {
+              color: '#9ca3af',
+              callback: (val) =>
+                isPercentCategoria
+                  ? Number(val).toFixed(2).replace('.', ',') + ' %'
+                  : Number(val).toLocaleString('pt-BR')
+            },
+            grid: { color: 'rgba(31, 41, 55, 0.7)' }
+          }
+        }
+      }
+    });
+  } catch (e) {
+    if (isAbortError(e)) return;
+    console.error(e);
+    showToast('Erro ao gerar comparacao.', 'error');
+  }
+}
 async function popularSelect(selectId, endpoint, optionValue = '', optionText = '') {
   const select = document.getElementById(selectId);
+  const valorAtual = select.value;
   const dados = await fetchJSON(endpoint);
   
   const primeiraOpcao = select.querySelector('option[value=""]');
@@ -417,10 +624,28 @@ async function popularSelect(selectId, endpoint, optionValue = '', optionText = 
     optOutros.textContent = 'Outros';
     select.appendChild(optOutros);
   }
+
+  const existeValorAnterior = Array.from(select.options).some((o) => o.value === valorAtual);
+  select.value = existeValorAnterior ? valorAtual : '';
+}
+
+async function recarregarCombosGlobais() {
+  await Promise.all([
+    popularSelect('pessoaSelect', '/api/pessoas'),
+    popularSelect('gerenciarPessoaSelect', '/api/pessoas'),
+    popularSelect('cadPessoaSelect', '/api/pessoas'),
+    popularSelect('anoSelect', '/api/anos'),
+    popularSelect('mesSelect', '/api/meses'),
+    popularSelect('comparePessoa1', '/api/pessoas'),
+    popularSelect('comparePessoa2', '/api/pessoas'),
+    popularSelect('compareAno1', '/api/anos'),
+    popularSelect('compareAno2', '/api/anos')
+  ]);
 }
 
 async function salvarCadastro(event) {
   event.preventDefault();
+  if (salvarCadastroEmAndamento) return;
 
   const pessoaSelecionada = cadPessoaSelect.value;
   const novaPessoa = cadPessoaNovo.value.trim();
@@ -447,12 +672,21 @@ async function salvarCadastro(event) {
     return;
   }
 
-  if (!ano || !mes || !categoria || !valor) {
+  if (!ano || !mes || !categoria || valor === '') {
     showToast('Preencha todos os campos do cadastro.', 'error');
     return;
   }
 
   try {
+    salvarCadastroEmAndamento = true;
+    const submitButton = document.querySelector('#cadastroForm .btn-primary');
+    setButtonLoading(
+      submitButton,
+      true,
+      editingId !== null ? 'Atualizando...' : 'Salvando...',
+      editingId !== null ? 'Atualizar registro' : 'Salvar registro'
+    );
+
     const payload = { pessoa, ano, mes, categoria, valor };
     const wasEditing = editingId !== null;
     const url = wasEditing ? `/api/indicadores/${editingId}` : '/api/indicadores';
@@ -462,16 +696,12 @@ async function salvarCadastro(event) {
     const gerenciarPessoaSelecionada = gerenciarPessoaSelect.value;
     const gerenciarCategoriaSelecionada = gerenciarCategoriaSelect.value;
 
-    const res = await fetch(url, {
+    await fetchJSON(url, {
       method,
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: JSON.stringify(payload),
+      timeoutMs: 20000
     });
-
-    if (!res.ok) {
-      const erro = await res.json().catch(() => ({}));
-      throw new Error(erro.error || 'Erro ao salvar registro.');
-    }
 
     cadPessoaSelect.value = '';
     cadPessoaNovo.value = '';
@@ -487,17 +717,7 @@ async function salvarCadastro(event) {
       if (btnText) btnText.textContent = 'Salvar registro';
     }
 
-    await Promise.all([
-      popularSelect('pessoaSelect', '/api/pessoas'),
-      popularSelect('gerenciarPessoaSelect', '/api/pessoas'),
-      popularSelect('cadPessoaSelect', '/api/pessoas'),
-      popularSelect('anoSelect', '/api/anos'),
-      popularSelect('mesSelect', '/api/meses'),
-      popularSelect('comparePessoa1', '/api/pessoas'),
-      popularSelect('comparePessoa2', '/api/pessoas'),
-      popularSelect('compareAno1', '/api/anos'),
-      popularSelect('compareAno2', '/api/anos')
-    ]);
+    await recarregarCombosGlobais();
 
     // Restaurar filtros da aba Gerenciar
     gerenciarPessoaSelect.value = gerenciarPessoaSelecionada;
@@ -512,6 +732,11 @@ async function salvarCadastro(event) {
   } catch (e) {
     console.error(e);
     showToast(e.message || 'Erro ao salvar registro.', 'error');
+  } finally {
+    salvarCadastroEmAndamento = false;
+    const submitButton = document.querySelector('#cadastroForm .btn-primary');
+    const labelPadrao = editingId !== null ? 'Atualizar registro' : 'Salvar registro';
+    setButtonLoading(submitButton, false, '', labelPadrao);
   }
 }
 
@@ -546,20 +771,8 @@ function entrarModoEdicao(row) {
 async function removerRegistro(id) {
   if (!confirm('Tem certeza que deseja remover este registro?')) return;
   try {
-    const res = await fetch(`/api/indicadores/${id}`, { method: 'DELETE' });
-    if (!res.ok && res.status !== 204) {
-      const erro = await res.json().catch(() => ({}));
-      throw new Error(erro.error || 'Erro ao remover registro.');
-    }
-    await Promise.all([
-      popularSelect('pessoaSelect', '/api/pessoas'),
-      popularSelect('anoSelect', '/api/anos'),
-      popularSelect('mesSelect', '/api/meses'),
-      popularSelect('comparePessoa1', '/api/pessoas'),
-      popularSelect('comparePessoa2', '/api/pessoas'),
-      popularSelect('compareAno1', '/api/anos'),
-      popularSelect('compareAno2', '/api/anos')
-    ]);
+    await fetchJSON(`/api/indicadores/${id}`, { method: 'DELETE' });
+    await recarregarCombosGlobais();
     await carregarDados();
     await carregarGerenciar();
     showToast('Registro removido com sucesso.', 'success');
@@ -570,6 +783,12 @@ async function removerRegistro(id) {
 }
 
 async function carregarDados() {
+  if (carregarDadosController) {
+    carregarDadosController.abort();
+  }
+  carregarDadosController = new AbortController();
+  const { signal } = carregarDadosController;
+
   const params = new URLSearchParams();
   const pessoa = pessoaSelect.value;
   const categoria = categoriaSelect.value;
@@ -577,13 +796,39 @@ async function carregarDados() {
   const mes = mesSelect.value;
   const coordenador = coordenadorSelect.value;
 
-  // Regra 1: se Coordenador tiver valor, ele pode funcionar sozinho (soma do grupo)
-  if (!coordenador) {
-    // Regra 2: sem coordenador, só mostra quando tiver Pessoa E Categoria
-    if (!pessoa && !categoria && !ano && !mes) {
+  try {
+    // Regra 1: se Coordenador tiver valor, ele pode funcionar sozinho (soma do grupo)
+    if (!coordenador) {
+      // Regra 2: sem coordenador, so mostra quando tiver Pessoa E Categoria
+      if (!pessoa && !categoria && !ano && !mes) {
+        tabelaBody.innerHTML = '';
+        cardsResumo.innerHTML = '';
+        serieTitulo.textContent = 'Selecione uma pessoa e uma categoria';
+
+        if (grafico) {
+          grafico.destroy();
+          grafico = null;
+        }
+        return;
+      }
+
+      if (!pessoa || !categoria) {
+        tabelaBody.innerHTML = '';
+        cardsResumo.innerHTML = '';
+        serieTitulo.textContent = 'Selecione uma pessoa e uma categoria';
+
+        if (grafico) {
+          grafico.destroy();
+          grafico = null;
+        }
+        return;
+      }
+    }
+
+    if (!pessoa && !categoria && !ano && !mes && !coordenador) {
       tabelaBody.innerHTML = '';
       cardsResumo.innerHTML = '';
-      serieTitulo.textContent = 'Selecione uma pessoa e uma categoria';
+      serieTitulo.textContent = 'Selecione filtros para visualizar';
 
       if (grafico) {
         grafico.destroy();
@@ -592,97 +837,89 @@ async function carregarDados() {
       return;
     }
 
-    if (!pessoa || !categoria) {
-      tabelaBody.innerHTML = '';
-      cardsResumo.innerHTML = '';
-      serieTitulo.textContent = 'Selecione uma pessoa e uma categoria';
+    if (pessoa) params.append('pessoa', pessoa);
+    if (categoria) params.append('categoria', categoria);
+    if (ano) params.append('ano', ano);
+    if (mes) params.append('mes', mes);
 
-      if (grafico) {
-        grafico.destroy();
-        grafico = null;
+    if (coordenador && GRUPOS[coordenador]) {
+      const pessoasGrupo = GRUPOS[coordenador];
+      const requisicoes = pessoasGrupo.map((p) => {
+        const pParams = new URLSearchParams(params);
+        pParams.set('pessoa', p);
+        return fetchJSON(`/api/indicadores?${pParams.toString()}`, { signal });
+      });
+
+      const resultados = await Promise.all(requisicoes);
+      const todos = resultados.flat();
+
+      const chave = (r) => `${r.ano}-${String(r.mes_ordem).padStart(2, '0')}-${r.categoria}-${r.mes}`;
+
+      const mapa = new Map();
+      for (const r of todos) {
+        const k = chave(r);
+        const atual = mapa.get(k) || {
+          mes: r.mes,
+          ano: r.ano,
+          mes_ordem: r.mes_ordem,
+          categoria: r.categoria,
+          pessoa: coordenador,
+          valor: 0
+        };
+        atual.valor += r.valor;
+        mapa.set(k, atual);
       }
-      return;
+
+      const dadosAgregados = Array.from(mapa.values()).sort(
+        (a, b) => a.ano - b.ano || a.mes_ordem - b.mes_ordem
+      );
+
+      const filtros = { pessoa: null, coordenador, categoria, ano, mes };
+      atualizarTabela(dadosAgregados);
+      renderizarCards(dadosAgregados, filtros);
+      renderizarGrafico(dadosAgregados, filtros);
+    } else {
+      const url = `/api/indicadores?${params}`;
+      const dados = await fetchJSON(url, { signal });
+
+      const filtros = { pessoa, categoria, ano, mes };
+      atualizarTabela(dados);
+      renderizarCards(dados, filtros);
+      renderizarGrafico(dados, filtros);
     }
-  }
-
-  if (!pessoa && !categoria && !ano && !mes && !coordenador) {
-    tabelaBody.innerHTML = '';
-    cardsResumo.innerHTML = '';
-    serieTitulo.textContent = 'Selecione filtros para visualizar';
-
-    if (grafico) {
-      grafico.destroy();
-      grafico = null;
-    }
-    return;
-  }
-
-  if (pessoa) params.append('pessoa', pessoa);
-  if (categoria) params.append('categoria', categoria);
-  if (ano) params.append('ano', ano);
-  if (mes) params.append('mes', mes);
-
-  if (coordenador && GRUPOS[coordenador]) {
-    const pessoasGrupo = GRUPOS[coordenador];
-    const requisicoes = pessoasGrupo.map((p) => {
-      const pParams = new URLSearchParams(params);
-      pParams.set('pessoa', p);
-      return fetchJSON(`/api/indicadores?${pParams.toString()}`);
-    });
-
-    const resultados = await Promise.all(requisicoes);
-    const todos = resultados.flat();
-
-    const chave = (r) => `${r.ano}-${String(r.mes_ordem).padStart(2, '0')}-${r.categoria}-${r.mes}`;
-
-    const mapa = new Map();
-    for (const r of todos) {
-      const k = chave(r);
-      const atual = mapa.get(k) || {
-        mes: r.mes,
-        ano: r.ano,
-        mes_ordem: r.mes_ordem,
-        categoria: r.categoria,
-        pessoa: coordenador,
-        valor: 0
-      };
-      atual.valor += r.valor;
-      mapa.set(k, atual);
-    }
-
-    const dadosAgregados = Array.from(mapa.values()).sort(
-      (a, b) => a.ano - b.ano || a.mes_ordem - b.mes_ordem
-    );
-
-    const filtros = { pessoa: null, coordenador, categoria, ano, mes };
-    atualizarTabela(dadosAgregados);
-    renderizarCards(dadosAgregados, filtros);
-    renderizarGrafico(dadosAgregados, filtros);
-  } else {
-    const url = `/api/indicadores?${params}`;
-    const dados = await fetchJSON(url);
-
-    const filtros = { pessoa, categoria, ano, mes };
-    atualizarTabela(dados);
-    renderizarCards(dados, filtros);
-    renderizarGrafico(dados, filtros);
+  } catch (e) {
+    if (isAbortError(e)) return;
+    console.error(e);
+    showToast('Erro ao carregar dados filtrados.', 'error');
   }
 }
 
 async function carregarGerenciar() {
-  const params = new URLSearchParams();
-  const pessoa = gerenciarPessoaSelect.value;
-  const categoria = gerenciarCategoriaSelect.value;
+  if (carregarGerenciarController) {
+    carregarGerenciarController.abort();
+  }
+  carregarGerenciarController = new AbortController();
+  const { signal } = carregarGerenciarController;
 
-  if (pessoa) params.append('pessoa', pessoa);
-  if (categoria) params.append('categoria', categoria);
+  try {
+    const params = new URLSearchParams();
+    const pessoa = gerenciarPessoaSelect.value;
+    const categoria = gerenciarCategoriaSelect.value;
 
-  const url = params.toString()
-    ? `/api/indicadores?${params}`
-    : '/api/indicadores';
+    if (pessoa) params.append('pessoa', pessoa);
+    if (categoria) params.append('categoria', categoria);
 
-  const dados = await fetchJSON(url);
-  atualizarTabelaGerenciar(dados);
+    const url = params.toString()
+      ? `/api/indicadores?${params}`
+      : '/api/indicadores';
+
+    const dados = await fetchJSON(url, { signal });
+    atualizarTabelaGerenciar(dados);
+  } catch (e) {
+    if (isAbortError(e)) return;
+    console.error(e);
+    showToast('Erro ao carregar dados para gerenciar.', 'error');
+  }
 }
 
 async function carregarLogs() {
@@ -694,9 +931,10 @@ async function carregarLogs() {
   logsPassword = pwd;
 
   try {
-    logsBody.innerHTML = '<tr><td colspan="9" style="text-align:center; color: var(--muted);">Carregando logs...</td></tr>';
+    setButtonLoading(logsLoadButton, true, 'Carregando...', 'Carregar logs');
+    logsBody.innerHTML = '<tr><td colspan="6" style="text-align:center; color: var(--muted);">Carregando logs...</td></tr>';
 
-    const res = await fetch('/api/logs?limit=200', {
+    const res = await fetchAuth('/api/logs?limit=200', {
       headers: {
         'x-logs-password': logsPassword
       }
@@ -717,7 +955,7 @@ async function carregarLogs() {
 
     if (!dados.length) {
       const tr = document.createElement('tr');
-      tr.innerHTML = '<td colspan="5" style="text-align:center; color: var(--muted);">Nenhum log encontrado.</td>';
+      tr.innerHTML = '<td colspan="6" style="text-align:center; color: var(--muted);">Nenhum log encontrado.</td>';
       logsBody.appendChild(tr);
       return;
     }
@@ -775,18 +1013,20 @@ async function carregarLogs() {
           : row.origem || '-';
 
       tr.innerHTML = `
-        <td>${dataFmt}</td>
-        <td>${acaoLegivel}</td>
-        <td>${alvo}</td>
-        <td>${titulo}</td>
-        <td class="right">${valorDesc}</td>
-        <td>${origemLegivel}</td>
+        <td>${escapeHtml(dataFmt)}</td>
+        <td>${escapeHtml(acaoLegivel)}</td>
+        <td>${escapeHtml(alvo)}</td>
+        <td>${escapeHtml(titulo)}</td>
+        <td class="right">${escapeHtml(valorDesc)}</td>
+        <td>${escapeHtml(origemLegivel)}</td>
       `;
       logsBody.appendChild(tr);
     }
   } catch (e) {
     console.error(e);
     showToast('Erro ao carregar logs.', 'error');
+  } finally {
+    setButtonLoading(logsLoadButton, false, '', 'Carregar logs');
   }
 }
 
@@ -795,17 +1035,9 @@ async function init() {
     await Promise.all([
       popularSelect('categoriaSelect', '/api/categorias'),
       popularSelect('cadCategoria', '/api/categorias'),
-      popularSelect('gerenciarCategoriaSelect', '/api/categorias'),
-      popularSelect('pessoaSelect', '/api/pessoas'),
-      popularSelect('gerenciarPessoaSelect', '/api/pessoas'),
-      popularSelect('cadPessoaSelect', '/api/pessoas'),
-      popularSelect('anoSelect', '/api/anos'),
-      popularSelect('mesSelect', '/api/meses'),
-      popularSelect('comparePessoa1', '/api/pessoas'),
-      popularSelect('comparePessoa2', '/api/pessoas'),
-      popularSelect('compareAno1', '/api/anos'),
-      popularSelect('compareAno2', '/api/anos')
+      popularSelect('gerenciarCategoriaSelect', '/api/categorias')
     ]);
+    await recarregarCombosGlobais();
     
     await carregarDados();
     await carregarGerenciar();
@@ -914,4 +1146,57 @@ tabLogs.addEventListener('click', () => {
   logsSection.classList.remove('hidden');
 });
 
-init();
+// Event listeners de autenticação
+if (loginForm) {
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const username = loginUsername.value.trim();
+    const senha = loginPassword.value;
+
+    if (!username || !senha) {
+      loginError.textContent = 'Preencha todos os campos.';
+      loginError.classList.remove('hidden');
+      return;
+    }
+
+    try {
+      loginError.classList.add('hidden');
+      await fazerLogin(username, senha);
+      mostrarApp();
+      await init();
+      showToast('Login realizado com sucesso!', 'success');
+    } catch (error) {
+      loginError.textContent = error.message || 'Erro ao fazer login.';
+      loginError.classList.remove('hidden');
+    }
+  });
+}
+
+if (logoutButton) {
+  logoutButton.addEventListener('click', () => {
+    logout();
+    showToast('Logout realizado com sucesso.', 'info');
+  });
+}
+
+// Garantir que apenas a tela de login seja exibida inicialmente
+if (loginScreen) {
+  loginScreen.classList.remove('hidden');
+  loginScreen.style.display = 'flex';
+}
+if (mainApp) {
+  mainApp.classList.add('hidden');
+  mainApp.style.display = 'none';
+}
+
+// Verificar autenticação ao carregar a página
+verificarAutenticacao().then((isAuthenticated) => {
+  if (isAuthenticated) {
+    mostrarApp();
+    init();
+  } else {
+    mostrarTelaLogin();
+  }
+});
+
+
