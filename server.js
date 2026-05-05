@@ -89,6 +89,10 @@ function verificarToken(token) {
   return true;
 }
 
+function usuarioEhAdmin(username) {
+  return normalizarTexto(username).toLowerCase() === ADMIN_USERNAME.toLowerCase();
+}
+
 function validarTextoCurto(valor, nomeCampo) {
   if (!valor) {
     return `${nomeCampo} é obrigatório.`;
@@ -341,7 +345,16 @@ async function requireAuth(req, res, next) {
     return res.status(401).json({ error: 'Não autenticado. Faça login novamente.' });
   }
   
+  const tokenData = activeTokens.get(token);
+  req.user = tokenData || null;
   req.token = token;
+  next();
+}
+
+function requireAdmin(req, res, next) {
+  if (!req.user || !usuarioEhAdmin(req.user.username)) {
+    return res.status(403).json({ error: 'Apenas admin pode executar esta ação.' });
+  }
   next();
 }
 
@@ -404,7 +417,8 @@ app.post('/api/auth/login', async (req, res) => {
 
     res.json({
       token,
-      username: usuario.username
+      username: usuario.username,
+      isAdmin: usuarioEhAdmin(usuario.username)
     });
   } catch (e) {
     console.error('Erro em POST /api/auth/login:', e);
@@ -414,10 +428,10 @@ app.post('/api/auth/login', async (req, res) => {
 
 // Endpoint para verificar token
 app.get('/api/auth/verify', requireAuth, async (req, res) => {
-  const tokenData = activeTokens.get(req.token);
   res.json({
     valid: true,
-    username: tokenData.username
+    username: req.user.username,
+    isAdmin: usuarioEhAdmin(req.user.username)
   });
 });
 
@@ -887,6 +901,67 @@ app.delete('/api/pessoas/:pessoa', requireAuth, async (req, res) => {
     return res.status(204).end();
   } catch (e) {
     console.error('Erro em DELETE /api/pessoas/:pessoa:', e);
+    return res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/pessoas/renomear', requireAuth, requireAdmin, async (req, res) => {
+  try {
+    const nomeAtual = normalizarTexto(req.body?.nomeAtual);
+    const novoNome = normalizarTexto(req.body?.novoNome);
+
+    const erroNomeAtual = validarTextoCurto(nomeAtual, 'Nome atual');
+    if (erroNomeAtual) {
+      return res.status(400).json({ error: erroNomeAtual });
+    }
+    const erroNovoNome = validarTextoCurto(novoNome, 'Novo nome');
+    if (erroNovoNome) {
+      return res.status(400).json({ error: erroNovoNome });
+    }
+    if (nomeAtual.toLowerCase() === novoNome.toLowerCase()) {
+      return res.status(400).json({ error: 'O novo nome deve ser diferente do nome atual.' });
+    }
+
+    let atualizados = 0;
+    if (USE_POSTGRES) {
+      const result = await dbRun(
+        `
+          UPDATE indicadores
+          SET pessoa = $1
+          WHERE lower(trim(pessoa)) = lower(trim($2))
+        `,
+        [novoNome, nomeAtual]
+      );
+      atualizados = result.rowCount || 0;
+    } else {
+      const info = await dbRun(
+        `
+          UPDATE indicadores
+          SET pessoa = ?
+          WHERE lower(trim(pessoa)) = lower(trim(?))
+        `,
+        [novoNome, nomeAtual]
+      );
+      atualizados = info.changes || 0;
+    }
+
+    if (atualizados === 0) {
+      return res.status(404).json({ error: 'Nenhum registro encontrado para o nome informado.' });
+    }
+
+    await registrarLog({
+      acao: 'update',
+      entidade: 'agente',
+      pessoa: novoNome,
+      origem: 'rename-pessoa'
+    });
+
+    return res.json({
+      message: 'Nome do agente atualizado com sucesso.',
+      atualizados
+    });
+  } catch (e) {
+    console.error('Erro em PUT /api/pessoas/renomear:', e);
     return res.status(500).json({ error: e.message });
   }
 });

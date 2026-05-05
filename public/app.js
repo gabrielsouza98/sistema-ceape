@@ -40,6 +40,10 @@ const gerenciarSection = document.getElementById('gerenciarSection');
 const logsSection = document.getElementById('logsSection');
 const gerenciarPessoaSelect = document.getElementById('gerenciarPessoaSelect');
 const gerenciarCategoriaSelect = document.getElementById('gerenciarCategoriaSelect');
+const renameAgentePanel = document.getElementById('renameAgentePanel');
+const renamePessoaAtualSelect = document.getElementById('renamePessoaAtualSelect');
+const renamePessoaNovoInput = document.getElementById('renamePessoaNovoInput');
+const renamePessoaButton = document.getElementById('renamePessoaButton');
 const logsPasswordInput = document.getElementById('logsPasswordInput');
 const logsLoadButton = document.getElementById('logsLoadButton');
 const logsBody = document.getElementById('logsBody');
@@ -48,6 +52,7 @@ let grafico;
 let graficoComparacao;
 let editingId = null;
 let logsPassword = '';
+let isAdmin = false;
 let salvarCadastroEmAndamento = false;
 let carregarDadosController = null;
 let carregarGerenciarController = null;
@@ -112,14 +117,15 @@ async function fazerLogin(username, senha) {
     const data = await response.json();
     authToken = data.token;
     localStorage.setItem('authToken', authToken);
-    return true;
+    isAdmin = !!data.isAdmin;
+    return data;
   } catch (error) {
     throw error;
   }
 }
 
 async function verificarToken() {
-  if (!authToken) return false;
+  if (!authToken) return null;
   
   try {
     const response = await fetch('/api/auth/verify', {
@@ -127,9 +133,10 @@ async function verificarToken() {
         'x-auth-token': authToken
       }
     });
-    return response.ok;
+    if (!response.ok) return null;
+    return await response.json();
   } catch (error) {
-    return false;
+    return null;
   }
 }
 
@@ -138,8 +145,18 @@ function logout() {
     fetchAuth('/api/auth/logout', { method: 'POST' }).catch(() => {});
   }
   authToken = null;
+  isAdmin = false;
   localStorage.removeItem('authToken');
   mostrarTelaLogin();
+}
+
+function atualizarVisibilidadeAdmin() {
+  if (!renameAgentePanel) return;
+  if (isAdmin) {
+    renameAgentePanel.classList.remove('hidden');
+  } else {
+    renameAgentePanel.classList.add('hidden');
+  }
 }
 
 function mostrarTelaLogin() {
@@ -170,12 +187,14 @@ async function verificarAutenticacao() {
     return false;
   }
 
-  const isValid = await verificarToken();
-  if (!isValid) {
+  const tokenInfo = await verificarToken();
+  if (!tokenInfo?.valid) {
     logout();
     return false;
   }
 
+  isAdmin = !!tokenInfo.isAdmin;
+  atualizarVisibilidadeAdmin();
   mostrarApp();
   return true;
 }
@@ -634,6 +653,7 @@ async function recarregarCombosGlobais() {
     popularSelect('pessoaSelect', '/api/pessoas'),
     popularSelect('gerenciarPessoaSelect', '/api/pessoas'),
     popularSelect('cadPessoaSelect', '/api/pessoas'),
+    popularSelect('renamePessoaAtualSelect', '/api/pessoas'),
     popularSelect('anoSelect', '/api/anos'),
     popularSelect('mesSelect', '/api/meses'),
     popularSelect('comparePessoa1', '/api/pessoas'),
@@ -641,6 +661,53 @@ async function recarregarCombosGlobais() {
     popularSelect('compareAno1', '/api/anos'),
     popularSelect('compareAno2', '/api/anos')
   ]);
+}
+
+async function renomearAgente() {
+  if (!isAdmin) {
+    showToast('Apenas admin pode renomear agente.', 'error');
+    return;
+  }
+
+  const nomeAtual = renamePessoaAtualSelect.value;
+  const novoNome = renamePessoaNovoInput.value.trim();
+
+  if (!nomeAtual) {
+    showToast('Selecione o agente que deseja renomear.', 'error');
+    return;
+  }
+  if (!novoNome) {
+    showToast('Informe o novo nome do agente.', 'error');
+    return;
+  }
+  if (nomeAtual.toLowerCase() === novoNome.toLowerCase()) {
+    showToast('O novo nome precisa ser diferente do atual.', 'error');
+    return;
+  }
+  if (!confirm(`Confirmar renomeação de "${nomeAtual}" para "${novoNome}"?`)) {
+    return;
+  }
+
+  try {
+    setButtonLoading(renamePessoaButton, true, 'Renomeando...', 'Renomear agente');
+    const result = await fetchJSON('/api/pessoas/renomear', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ nomeAtual, novoNome }),
+      timeoutMs: 20000
+    });
+
+    renamePessoaNovoInput.value = '';
+    await recarregarCombosGlobais();
+    await carregarDados();
+    await carregarGerenciar();
+    showToast(`Agente renomeado com sucesso (${result.atualizados} registro(s)).`, 'success');
+  } catch (e) {
+    console.error(e);
+    showToast(e.message || 'Erro ao renomear agente.', 'error');
+  } finally {
+    setButtonLoading(renamePessoaButton, false, '', 'Renomear agente');
+  }
 }
 
 async function salvarCadastro(event) {
@@ -1146,6 +1213,10 @@ tabLogs.addEventListener('click', () => {
   logsSection.classList.remove('hidden');
 });
 
+if (renamePessoaButton) {
+  renamePessoaButton.addEventListener('click', renomearAgente);
+}
+
 // Event listeners de autenticação
 if (loginForm) {
   loginForm.addEventListener('submit', async (e) => {
@@ -1161,7 +1232,9 @@ if (loginForm) {
 
     try {
       loginError.classList.add('hidden');
-      await fazerLogin(username, senha);
+      const loginInfo = await fazerLogin(username, senha);
+      isAdmin = !!loginInfo?.isAdmin;
+      atualizarVisibilidadeAdmin();
       mostrarApp();
       await init();
       showToast('Login realizado com sucesso!', 'success');
