@@ -351,12 +351,6 @@ async function requireAuth(req, res, next) {
   next();
 }
 
-function requireAdmin(req, res, next) {
-  if (!req.user || !usuarioEhAdmin(req.user.username)) {
-    return res.status(403).json({ error: 'Apenas admin pode executar esta ação.' });
-  }
-  next();
-}
 
 app.get('/api/health', async (_req, res) => {
   try {
@@ -905,7 +899,7 @@ app.delete('/api/pessoas/:pessoa', requireAuth, async (req, res) => {
   }
 });
 
-app.put('/api/pessoas/renomear', requireAuth, requireAdmin, async (req, res) => {
+app.put('/api/pessoas/renomear', requireAuth, async (req, res) => {
   try {
     const nomeAtual = normalizarTexto(req.body?.nomeAtual);
     const novoNome = normalizarTexto(req.body?.novoNome);

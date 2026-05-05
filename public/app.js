@@ -151,12 +151,8 @@ function logout() {
 }
 
 function atualizarVisibilidadeAdmin() {
-  if (!renameAgentePanel) return;
-  if (isAdmin) {
-    renameAgentePanel.classList.remove('hidden');
-  } else {
-    renameAgentePanel.classList.add('hidden');
-  }
+  // Mantido por compatibilidade com o fluxo atual de autenticação.
+  // A área de renomear agente agora é visível para qualquer usuário logado.
 }
 
 function mostrarTelaLogin() {
@@ -664,11 +660,6 @@ async function recarregarCombosGlobais() {
 }
 
 async function renomearAgente() {
-  if (!isAdmin) {
-    showToast('Apenas admin pode renomear agente.', 'error');
-    return;
-  }
-
   const nomeAtual = renamePessoaAtualSelect.value;
   const novoNome = renamePessoaNovoInput.value.trim();
 
